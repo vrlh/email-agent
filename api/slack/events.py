@@ -486,9 +486,15 @@ def _cmd_status(params: dict):
 
 
 def _cmd_help(params: dict):
+    import os
+    setup_secret = os.environ.get("SETUP_SECRET", "")
+    host = os.environ.get("VERCEL_URL", "email-agent-fawn.vercel.app")
+    add_url = f"https://{host}/api/auth/gmail_start?secret={setup_secret}"
+
     _reply(
         "*Available commands:*\n"
-        "\u2022 \"list\" / \"list unread\" / \"what needs my attention?\"\n"
+        "\u2022 \"list\" / \"list unread\" / \"list all\"\n"
+        "\u2022 \"needs reply\" \u2014 emails you owe a response to\n"
         "\u2022 \"summarize #3\" / \"summarize the email from Sarah\"\n"
         "\u2022 \"reply to #1 saying I'll be there Thursday\"\n"
         "\u2022 \"archive #2\" / \"archive #2 through #5\"\n"
@@ -496,10 +502,12 @@ def _cmd_help(params: dict):
         "\u2022 \"cancel\" \u2014 cancel pending draft\n"
         "\u2022 \"edit: change Thursday to Friday\" \u2014 modify pending draft\n"
         "\u2022 \"status\" \u2014 account info and sync times\n"
+        "\u2022 \"onboard\" \u2014 scan last 3 months of emails\n"
         "\u2022 \"ignore emails from linkedin.com\" \u2014 auto-archive matching emails\n"
         "\u2022 \"always notify me about emails from boss@co.com\" \u2014 always surface\n"
         "\u2022 \"rules\" \u2014 list your rules\n"
-        "\u2022 \"delete rule #2\" \u2014 remove a rule"
+        "\u2022 \"delete rule #2\" \u2014 remove a rule\n\n"
+        f"\U0001f4e7 *<{add_url}|Add another Gmail account>*"
     )
 
 
