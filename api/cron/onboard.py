@@ -127,13 +127,19 @@ def _run_onboard() -> dict:
             new_ids = upsert_emails(orm_objects)
 
             # ── Check reply status for needs_reply emails ──
+            import time
             from lib.db import mark_email_replied
             needs_reply_count = 0
+            reply_checks = 0
             for e in emails:
                 if e.id not in new_ids:
                     continue
                 triage = triage_map.get(e.id)
                 if triage and triage.needs_reply and e.thread_id:
+                    # Throttle thread checks: ~10/sec to stay under rate limit
+                    reply_checks += 1
+                    if reply_checks % 10 == 0:
+                        time.sleep(1)
                     if check_thread_replied(creds, e.thread_id, account.email_address):
                         mark_email_replied(e.id)
                     else:

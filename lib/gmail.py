@@ -142,8 +142,9 @@ def _fetch_recent(
 def _fetch_messages_by_ids(
     service, account_id: str, message_ids: List[str]
 ) -> List[Email]:
+    import time
     emails: List[Email] = []
-    for mid in message_ids:
+    for i, mid in enumerate(message_ids):
         try:
             raw = (
                 service.users()
@@ -152,8 +153,14 @@ def _fetch_messages_by_ids(
                 .execute()
             )
             emails.append(_parse_message(raw, account_id))
-        except HttpError:
+        except HttpError as exc:
+            if exc.resp.status == 429:
+                time.sleep(2)  # Back off on rate limit
+                continue
             continue
+        # Throttle: ~20 requests/sec to stay under 250 quota units/sec
+        if i % 20 == 19:
+            time.sleep(1)
     return emails
 
 
