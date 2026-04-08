@@ -164,6 +164,7 @@ _KEYWORD_INTENTS = {
     "rules": "list_rules",
     "list rules": "list_rules",
     "needs reply": "needs_reply",
+    "list needs reply": "needs_reply",
     "what needs a reply": "needs_reply",
     "unreplied": "needs_reply",
     "onboard": "onboard",
@@ -267,7 +268,7 @@ def _build_context() -> str:
 
 
 def _cmd_list(params: dict):
-    from lib.db import get_active_accounts, get_emails_for_account
+    from lib.db import get_active_accounts, get_attention_emails, get_emails_for_account
     from lib.slack_client import build_email_list_blocks
 
     accounts = get_active_accounts()
@@ -276,20 +277,22 @@ def _cmd_list(params: dict):
         return
 
     filter_type = params.get("filter", "unread")
+    show_all = filter_type == "all"
     unread_only = filter_type in ("unread", "urgent")
 
     all_emails = []
     account_map = {}
     for acct in accounts:
         account_map[acct.id] = acct.email_address
-        emails = get_emails_for_account(
-            acct.id, unread_only=unread_only, limit=20,
-        )
+        if show_all:
+            emails = get_emails_for_account(acct.id, limit=50)
+        else:
+            emails = get_attention_emails(acct.id, unread_only=unread_only, limit=50)
         all_emails.extend(emails)
 
     # Sort by date descending
     all_emails.sort(key=lambda e: e.date, reverse=True)
-    all_emails = all_emails[:20]
+    all_emails = all_emails[:50]
 
     # Convert ORM objects to model-like dicts for block builder
     from lib.models import Email, EmailAddress, EmailCategory, EmailPriority

@@ -163,6 +163,28 @@ def get_emails_for_account(
         return results
 
 
+def get_attention_emails(
+    account_id: str,
+    unread_only: bool = False,
+    limit: int = 50,
+) -> List[EmailORM]:
+    """Get emails that need attention (filtered out noise/auto-archived)."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.account_id == account_id)
+            .where(EmailORM.triage_decision == "needs_attention")
+            .order_by(EmailORM.date.desc())
+            .limit(limit)
+        )
+        if unread_only:
+            stmt = stmt.where(EmailORM.is_read.is_(False))
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
 def get_unnotified_attention_emails() -> List[EmailORM]:
     """Get emails that need attention and haven't been notified yet."""
     with get_session() as session:
