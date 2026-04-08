@@ -12,7 +12,7 @@ COMMAND_PARSE_SYSTEM = (
     "Return a JSON object with exactly two keys:\n"
     '  "intent": one of "list", "summarize", "reply", "archive", "send", '
     '"cancel", "edit", "status", "help", "ignore", "priority_sender", '
-    '"list_rules", "delete_rule", "unknown"\n'
+    '"list_rules", "delete_rule", "needs_reply", "onboard", "unknown"\n'
     '  "params": an object with relevant parameters\n\n'
     "Parameter conventions:\n"
     '- "list" intent: {"filter": "unread"|"all"|"urgent", "account": optional email}\n'
@@ -31,6 +31,8 @@ COMMAND_PARSE_SYSTEM = (
     '  Example: "always notify me about emails from boss@co.com" -> {"field":"sender","operator":"contains","value":"boss@co.com"}\n'
     '- "list_rules" intent: {}\n'
     '- "delete_rule" intent: {"ref": "#N"}\n'
+    '- "needs_reply" intent: {}\n'
+    '- "onboard" intent: {} (scan/import emails from last 3 months)\n'
     '- "unknown" intent: {"raw": original text}\n\n'
     "Respond with ONLY the JSON object, no markdown fences."
 )

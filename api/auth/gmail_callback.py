@@ -36,17 +36,28 @@ class handler(BaseHTTPRequestHandler):
             # Encrypt and store
             encrypted = encrypt_tokens(json.dumps(tokens))
             create_tables()
-            upsert_account(
+            account = upsert_account(
                 account_id=str(uuid.uuid4()),
                 email_address=email_address,
                 display_name=display_name,
                 encrypted_tokens=encrypted,
             )
 
+            # Notify Slack and auto-onboard
+            try:
+                from lib.slack_client import send_dm
+                send_dm(f"\U0001f4e5 *New account connected: {email_address}*\nStarting email onboard (this may take a minute)...")
+                from lib.onboard import run_onboard
+                run_onboard(account_id=account.id)
+            except Exception as onboard_exc:
+                # Don't fail the OAuth flow if onboard fails
+                from lib.slack_client import send_dm
+                send_dm(f"\u26a0\ufe0f Account connected but onboard failed: {onboard_exc}\nType \"onboard\" in Slack to retry.")
+
             self._respond(
                 200,
                 f"<h2>Connected {email_address}</h2>"
-                f"<p>Account added successfully. You can close this tab.</p>",
+                f"<p>Account added and email onboarding started. Check Slack for updates.</p>",
                 content_type="text/html",
             )
         except Exception as exc:

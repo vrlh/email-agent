@@ -166,6 +166,9 @@ _KEYWORD_INTENTS = {
     "needs reply": "needs_reply",
     "what needs a reply": "needs_reply",
     "unreplied": "needs_reply",
+    "onboard": "onboard",
+    "scan my emails": "onboard",
+    "scan emails": "onboard",
 }
 
 
@@ -222,6 +225,7 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         "list_rules": _cmd_list_rules,
         "delete_rule": _cmd_delete_rule,
         "needs_reply": _cmd_needs_reply,
+        "onboard": _cmd_onboard,
     }
 
     handler_fn = routes.get(intent)
@@ -597,6 +601,12 @@ def _cmd_needs_reply(params: dict):
         lines.append(f"\u2022 *#{i}* {e.subject} \u2014 {e.sender_email}{acct_tag}{age}")
 
     _reply("\n".join(lines))
+
+
+def _cmd_onboard(params: dict):
+    _reply("\U0001f4e5 Starting email onboard (scanning last 3 months). This may take a minute...")
+    from lib.onboard import run_onboard
+    run_onboard()
 
 
 # ======================================================================
