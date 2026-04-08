@@ -220,17 +220,23 @@ def _process_account(account) -> dict:
 # ======================================================================
 
 
-def _triage_with_fallback(emails) -> dict:
-    """Try LLM triage, fall back to rule-based."""
-    try:
-        from lib.llm import triage_emails
-        results = triage_emails(emails)
-        return {r.email_id: r for r in results}
-    except Exception as exc:
-        logger.warning(f"Claude triage failed, using rule-based: {exc}")
-        from lib.triage import triage_emails_rule_based
-        results = triage_emails_rule_based(emails)
-        return {r.email_id: r for r in results}
+def _triage_with_fallback(emails, chunk_size: int = 15) -> dict:
+    """Try LLM triage in chunks, fall back to rule-based."""
+    all_results = {}
+    for i in range(0, len(emails), chunk_size):
+        chunk = emails[i:i + chunk_size]
+        try:
+            from lib.llm import triage_emails
+            results = triage_emails(chunk)
+            for r in results:
+                all_results[r.email_id] = r
+        except Exception as exc:
+            logger.warning(f"LLM triage failed for chunk: {exc}")
+            from lib.triage import triage_emails_rule_based
+            results = triage_emails_rule_based(chunk)
+            for r in results:
+                all_results[r.email_id] = r
+    return all_results
 
 
 def _default_decision(email) -> str:

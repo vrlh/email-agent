@@ -193,16 +193,23 @@ def _onboard_single_account(account) -> dict:
         return {"account": account.email_address, "error": str(exc)}
 
 
-def _triage_batch(emails) -> dict:
-    try:
-        from lib.llm import triage_emails
-        results = triage_emails(emails)
-        return {r.email_id: r for r in results}
-    except Exception as exc:
-        logger.warning(f"LLM triage failed, using rule-based: {exc}")
-        from lib.triage import triage_emails_rule_based
-        results = triage_emails_rule_based(emails)
-        return {r.email_id: r for r in results}
+def _triage_batch(emails, chunk_size: int = 15) -> dict:
+    """Triage emails in small chunks to avoid LLM output truncation."""
+    all_results = {}
+    for i in range(0, len(emails), chunk_size):
+        chunk = emails[i:i + chunk_size]
+        try:
+            from lib.llm import triage_emails
+            results = triage_emails(chunk)
+            for r in results:
+                all_results[r.email_id] = r
+        except Exception as exc:
+            logger.warning(f"LLM triage failed for chunk {i}-{i+len(chunk)}: {exc}")
+            from lib.triage import triage_emails_rule_based
+            results = triage_emails_rule_based(chunk)
+            for r in results:
+                all_results[r.email_id] = r
+    return all_results
 
 
 def _default_decision(email) -> str:
