@@ -80,11 +80,12 @@ class handler(BaseHTTPRequestHandler):
             return
 
         # Process the command — results are posted via Slack Web API
+        channel = event.get("channel", "")
         try:
-            _process_command(text)
+            _process_command(text, channel)
         except Exception as exc:
             logger.error(f"Command processing error: {exc}")
-            _send_error(str(exc))
+            _send_error(str(exc), channel)
 
         self._ok()
 
@@ -139,19 +140,52 @@ class handler(BaseHTTPRequestHandler):
 # Command processing (runs after 200 is queued)
 # ======================================================================
 
-def _send_error(detail: str):
-    from lib.slack_client import send_dm
-    send_dm(f"\u26a0\ufe0f Something went wrong: {detail}")
+def _send_error(detail: str, channel: str = ""):
+    from lib.slack_client import send_to_channel
+    send_to_channel(channel, f"\u26a0\ufe0f Something went wrong: {detail}")
 
 
-def _process_command(text: str):
-    """Parse intent via Claude and route to the appropriate handler."""
-    from lib.llm import parse_command
-    from lib.slack_client import send_dm
+# Simple keyword matching as fallback when LLM is unavailable
+_KEYWORD_INTENTS = {
+    "status": "status",
+    "help": "help",
+    "send": "send",
+    "cancel": "cancel",
+    "list": "list",
+    "list unread": "list",
+    "list all": "list",
+}
 
-    # Build context string with recent email numbering
-    context = _build_context()
-    cmd = parse_command(text, context)
+
+def _process_command(text: str, channel: str = ""):
+    """Parse intent and route to the appropriate handler."""
+    from lib.slack_client import send_to_channel, set_active_channel
+
+    # Store channel so send_dm() replies to the same conversation
+    set_active_channel(channel)
+
+    # Try simple keyword match first (free, instant, no LLM needed)
+    text_lower = text.strip().lower()
+    intent = _KEYWORD_INTENTS.get(text_lower)
+
+    if not intent:
+        # Fall back to LLM parsing for complex commands
+        try:
+            from lib.llm import parse_command
+            context = _build_context()
+            cmd = parse_command(text, context)
+            intent = cmd.intent
+            params = cmd.params
+        except Exception as exc:
+            logger.error(f"LLM parse failed: {exc}")
+            send_to_channel(
+                channel,
+                f"\u26a0\ufe0f LLM parsing failed: {exc}\n\n"
+                "Simple commands still work: status, list, help, send, cancel"
+            )
+            return
+    else:
+        params = {}
 
     routes = {
         "list": _cmd_list,
@@ -165,11 +199,12 @@ def _process_command(text: str):
         "help": _cmd_help,
     }
 
-    handler_fn = routes.get(cmd.intent)
+    handler_fn = routes.get(intent)
     if handler_fn:
-        handler_fn(cmd.params)
+        handler_fn(params)
     else:
-        send_dm(
+        send_to_channel(
+            channel,
             "I didn't understand that. Try:\n"
             "\u2022 \"list unread\"\n"
             "\u2022 \"summarize #3\"\n"
@@ -177,6 +212,8 @@ def _process_command(text: str):
             "\u2022 \"archive #2\"\n"
             "\u2022 \"status\""
         )
+
+
 
 
 def _build_context() -> str:
