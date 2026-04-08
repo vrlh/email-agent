@@ -208,6 +208,34 @@ def get_needs_reply_emails() -> List[EmailORM]:
         return results
 
 
+def get_untriaged_emails(account_id: str, limit: int = 200) -> List[EmailORM]:
+    """Get emails where needs_reply has never been set (NULL)."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.account_id == account_id)
+            .where(EmailORM.needs_reply.is_(None))
+            .where(EmailORM.category == "primary")
+            .order_by(EmailORM.date.desc())
+            .limit(limit)
+        )
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+def bulk_update_needs_reply(updates: List[dict]) -> None:
+    """Batch update needs_reply and summary for emails. Each dict: {id, needs_reply, summary}."""
+    with get_session() as session:
+        for u in updates:
+            email = session.get(EmailORM, u["id"])
+            if email:
+                email.needs_reply = u.get("needs_reply", False)
+                if u.get("summary"):
+                    email.summary = u["summary"]
+
+
 def get_unreplied_thread_ids(account_id: str) -> List[dict]:
     """Get thread IDs of emails needing reply for reply-sync checking."""
     with get_session() as session:

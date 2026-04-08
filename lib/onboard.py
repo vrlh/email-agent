@@ -136,21 +136,44 @@ def _onboard_single_account(account) -> dict:
 
         new_ids = upsert_emails(orm_objects)
 
-        # Check reply status for needs_reply emails
+        # Backfill needs_reply for existing emails that were never triaged
+        from lib.db import bulk_update_needs_reply, get_untriaged_emails
+        untriaged = get_untriaged_emails(account.id, limit=200)
+        if untriaged:
+            # Convert ORM to model for LLM triage
+            from lib.models import Email, EmailAddress
+            model_emails = []
+            for u in untriaged:
+                model_emails.append(Email(
+                    id=u.id, account_id=u.account_id, message_id=u.message_id or u.id,
+                    subject=u.subject, sender=EmailAddress(email=u.sender_email, name=u.sender_name),
+                    body_text=u.body_text, date=u.date, is_read=u.is_read,
+                    category=EmailCategory(u.category) if u.category else EmailCategory.PRIMARY,
+                ))
+            backfill_triage = _triage_batch(model_emails)
+            updates = []
+            for u in untriaged:
+                t = backfill_triage.get(u.id)
+                updates.append({
+                    "id": u.id,
+                    "needs_reply": t.needs_reply if t else False,
+                    "summary": t.summary if t else None,
+                })
+            bulk_update_needs_reply(updates)
+
+        # Check reply status for all needs_reply emails (new + backfilled)
+        from lib.db import get_unreplied_thread_ids
+        unreplied = get_unreplied_thread_ids(account.id)
         needs_reply_count = 0
         reply_checks = 0
-        for e in emails:
-            if e.id not in new_ids:
-                continue
-            triage = triage_map.get(e.id)
-            if triage and triage.needs_reply and e.thread_id:
-                reply_checks += 1
-                if reply_checks % 10 == 0:
-                    time.sleep(1)
-                if check_thread_replied(creds, e.thread_id, account.email_address):
-                    mark_email_replied(e.id)
-                else:
-                    needs_reply_count += 1
+        for item in unreplied:
+            reply_checks += 1
+            if reply_checks % 10 == 0:
+                time.sleep(1)
+            if check_thread_replied(creds, item["thread_id"], account.email_address):
+                mark_email_replied(item["email_id"])
+            else:
+                needs_reply_count += 1
 
         if history_id:
             update_account_sync(account.id, history_id)
@@ -159,6 +182,7 @@ def _onboard_single_account(account) -> dict:
             "account": account.email_address,
             "fetched": len(emails),
             "new": len(new_ids),
+            "backfilled": len(untriaged),
             "needs_reply": needs_reply_count,
         }
 
