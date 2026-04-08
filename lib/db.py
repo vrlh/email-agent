@@ -185,6 +185,43 @@ def mark_email_notified(email_id: str) -> None:
             email.notified_at = datetime.now(timezone.utc)
 
 
+def mark_email_replied(email_id: str) -> None:
+    with get_session() as session:
+        email = session.get(EmailORM, email_id)
+        if email:
+            email.replied_at = datetime.now(timezone.utc)
+            email.needs_reply = False
+
+
+def get_needs_reply_emails() -> List[EmailORM]:
+    """Get emails that need a reply and haven't been replied to."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.needs_reply.is_(True))
+            .where(EmailORM.replied_at.is_(None))
+            .order_by(EmailORM.date.desc())
+        )
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+def get_unreplied_thread_ids(account_id: str) -> List[dict]:
+    """Get thread IDs of emails needing reply for reply-sync checking."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM.id, EmailORM.thread_id)
+            .where(EmailORM.account_id == account_id)
+            .where(EmailORM.needs_reply.is_(True))
+            .where(EmailORM.replied_at.is_(None))
+            .where(EmailORM.thread_id.isnot(None))
+        )
+        rows = session.execute(stmt).all()
+        return [{"email_id": r[0], "thread_id": r[1]} for r in rows]
+
+
 def get_email_by_id(email_id: str) -> Optional[EmailORM]:
     with get_session() as session:
         email = session.get(EmailORM, email_id)

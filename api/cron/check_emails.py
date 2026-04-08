@@ -71,11 +71,13 @@ def _run_pipeline() -> dict:
     total_new = 0
     all_attention_emails: dict = {}  # account_email -> list of email dicts
     total_archived = 0
+    total_replies_synced = 0
 
     for account in accounts:
         result = _process_account(account)
         results.append(result)
         total_new += result.get("new", 0)
+        total_replies_synced += result.get("replies_synced", 0)
 
         # Collect attention emails for summary
         attention = result.get("attention_emails", [])
@@ -83,14 +85,17 @@ def _run_pipeline() -> dict:
             all_attention_emails[account.email_address] = attention
         total_archived += result.get("archived", 0)
 
-    # ── Send single summary notification ──
-    notified = _send_summary(all_attention_emails, total_archived)
+    # ── Send single summary notification (includes needs-reply reminder) ──
+    from lib.db import get_needs_reply_emails
+    unreplied = get_needs_reply_emails()
+    notified = _send_summary(all_attention_emails, total_archived, unreplied)
 
     return {
         "status": "ok",
         "accounts_processed": len(results),
         "total_new_emails": total_new,
         "total_notifications_sent": notified,
+        "total_replies_synced": total_replies_synced,
         "drafts_expired": expired_count,
         "details": results,
     }
@@ -187,7 +192,10 @@ def _process_account(account) -> dict:
         for ae in attention_emails:
             mark_email_notified(ae["id"])
 
-        # ── 7. Update sync state ──
+        # ── 7. Sync reply status from Gmail ──
+        replies_synced = _sync_reply_status(account, creds)
+
+        # ── 8. Update sync state ──
         update_account_sync(account.id, new_history_id)
         complete_sync_log(log_id, len(emails), len(new_ids))
 
@@ -197,6 +205,7 @@ def _process_account(account) -> dict:
             "new": len(new_ids),
             "attention_emails": attention_emails,
             "archived": archived_count,
+            "replies_synced": replies_synced,
         }
 
     except Exception as exc:
@@ -267,16 +276,48 @@ def _collect_attention_emails(emails, triage_map: dict) -> tuple:
     return attention, archived
 
 
-def _send_summary(emails_by_account: dict, total_archived: int) -> int:
+def _sync_reply_status(account, creds) -> int:
+    """Check Gmail threads to see if unreplied emails have been answered. Returns count synced."""
+    from lib.db import get_unreplied_thread_ids, mark_email_replied
+    from lib.gmail import check_thread_replied
+
+    unreplied = get_unreplied_thread_ids(account.id)
+    synced = 0
+    for item in unreplied:
+        try:
+            if check_thread_replied(creds, item["thread_id"], account.email_address):
+                mark_email_replied(item["email_id"])
+                synced += 1
+        except Exception:
+            continue
+    return synced
+
+
+def _send_summary(emails_by_account: dict, total_archived: int, unreplied_emails=None) -> int:
     """Send a single summary message to the channel. Returns count of emails notified."""
     from lib.slack_client import build_cron_summary_blocks, send_dm
 
     total = sum(len(v) for v in emails_by_account.values())
-    if total == 0:
+    unreplied_count = len(unreplied_emails) if unreplied_emails else 0
+
+    if total == 0 and unreplied_count == 0:
         return 0
 
     blocks = build_cron_summary_blocks(emails_by_account, total_archived)
-    send_dm(f"{total} new email(s) need attention", blocks=blocks)
+
+    # Append needs-reply reminder if there are outstanding items
+    if unreplied_count > 0:
+        lines = [f"\n\u23f3 *{unreplied_count} email(s) still need your reply:*\n"]
+        for e in unreplied_emails[:10]:
+            lines.append(f"\u2022 {e.subject} \u2014 {e.sender_email}")
+        if unreplied_count > 10:
+            lines.append(f"_...and {unreplied_count - 10} more. Type \"needs reply\" to see all._")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    if total == 0 and unreplied_count > 0:
+        send_dm(f"{unreplied_count} email(s) still need your reply", blocks=blocks)
+    else:
+        send_dm(f"{total} new email(s) need attention", blocks=blocks)
     return total
 
 

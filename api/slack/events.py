@@ -163,6 +163,9 @@ _KEYWORD_INTENTS = {
     "list all": "list",
     "rules": "list_rules",
     "list rules": "list_rules",
+    "needs reply": "needs_reply",
+    "what needs a reply": "needs_reply",
+    "unreplied": "needs_reply",
 }
 
 
@@ -218,6 +221,7 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         "priority_sender": _cmd_priority_sender,
         "list_rules": _cmd_list_rules,
         "delete_rule": _cmd_delete_rule,
+        "needs_reply": _cmd_needs_reply,
     }
 
     handler_fn = routes.get(intent)
@@ -565,6 +569,34 @@ def _cmd_delete_rule(params: dict):
             _reply(f"Rule #{idx + 1} not found. Use \"rules\" to see your rules.")
     except ValueError:
         _reply("Use a number, e.g. \"delete rule #2\"")
+
+
+def _cmd_needs_reply(params: dict):
+    from lib.db import get_needs_reply_emails, get_active_accounts
+
+    emails = get_needs_reply_emails()
+    if not emails:
+        _reply("\u2705 No emails need your reply right now.")
+        return
+
+    accounts = {a.id: a.email_address for a in get_active_accounts()}
+    lines = [f"\u23f3 *{len(emails)} email(s) need your reply:*\n"]
+    for i, e in enumerate(emails, 1):
+        acct = accounts.get(e.account_id, "")
+        acct_tag = f" _({acct})_" if acct else ""
+        age = ""
+        if e.date:
+            from datetime import datetime, timezone
+            hours = (datetime.now(timezone.utc) - e.date.replace(
+                tzinfo=timezone.utc if e.date.tzinfo is None else e.date.tzinfo
+            )).total_seconds() / 3600
+            if hours < 24:
+                age = f" ({int(hours)}h ago)"
+            else:
+                age = f" ({int(hours / 24)}d ago)"
+        lines.append(f"\u2022 *#{i}* {e.subject} \u2014 {e.sender_email}{acct_tag}{age}")
+
+    _reply("\n".join(lines))
 
 
 # ======================================================================

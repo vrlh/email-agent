@@ -240,6 +240,73 @@ def create_gmail_draft(
 
 
 # ---------------------------------------------------------------------------
+# Reply detection
+# ---------------------------------------------------------------------------
+
+
+def check_thread_replied(creds: Credentials, thread_id: str, account_email: str) -> bool:
+    """Check if the account owner has sent a reply in a Gmail thread."""
+    service = _build_service(creds)
+    try:
+        thread = service.users().threads().get(
+            userId="me", id=thread_id, format="metadata",
+            metadataHeaders=["From"],
+        ).execute()
+        account_lower = account_email.lower()
+        for msg in thread.get("messages", [])[1:]:  # skip first message (the original)
+            headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+            from_addr = headers.get("From", "").lower()
+            if account_lower in from_addr:
+                return True
+        return False
+    except HttpError:
+        return False
+
+
+def fetch_inbox_emails_since(
+    creds: Credentials,
+    account_id: str,
+    since_days: int = 90,
+    max_results: int = 500,
+) -> Tuple[List[Email], Optional[str]]:
+    """Fetch inbox emails from the last N days for onboarding/backfill."""
+    import time
+    service = _build_service(creds)
+
+    since_epoch = int(time.time()) - (since_days * 86400)
+    query = f"after:{since_epoch}"
+
+    all_message_ids: List[str] = []
+    page_token = None
+
+    while len(all_message_ids) < max_results:
+        resp = (
+            service.users()
+            .messages()
+            .list(
+                userId="me",
+                q=query,
+                labelIds=["INBOX"],
+                maxResults=min(100, max_results - len(all_message_ids)),
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        msgs = resp.get("messages", [])
+        all_message_ids.extend(m["id"] for m in msgs)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    emails = _fetch_messages_by_ids(service, account_id, all_message_ids[:max_results])
+
+    profile = service.users().getProfile(userId="me").execute()
+    history_id = str(profile.get("historyId", ""))
+
+    return emails, history_id
+
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 

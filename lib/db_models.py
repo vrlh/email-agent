@@ -68,6 +68,7 @@ class EmailORM(Base):
     triage_decision = Column(String)
     summary = Column(Text)
     needs_reply = Column(Boolean)
+    replied_at = Column(DateTime(timezone=True))
     notified_at = Column(DateTime(timezone=True))
     processed_at = Column(DateTime(timezone=True))
     raw_headers = Column(JSONB)
