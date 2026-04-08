@@ -230,6 +230,20 @@ def get_needs_reply_emails() -> List[EmailORM]:
         return results
 
 
+def reset_needs_reply(account_id: str) -> int:
+    """Reset needs_reply to NULL for all primary emails so they get re-triaged."""
+    with get_session() as session:
+        stmt = (
+            update(EmailORM)
+            .where(EmailORM.account_id == account_id)
+            .where(EmailORM.category == "primary")
+            .where(EmailORM.replied_at.is_(None))  # don't reset already-replied emails
+            .values(needs_reply=None)
+        )
+        result = session.execute(stmt)
+        return result.rowcount
+
+
 def get_untriaged_emails(account_id: str, limit: int = 200) -> List[EmailORM]:
     """Get emails where needs_reply has never been set (NULL)."""
     with get_session() as session:

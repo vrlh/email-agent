@@ -42,13 +42,14 @@ def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> 
         results.append(result)
 
     total_new = sum(r.get("new", 0) for r in results)
+    total_backfilled = sum(r.get("backfilled", 0) for r in results)
     total_needs_reply = sum(r.get("needs_reply", 0) for r in results)
 
     if notify_slack:
         from lib.slack_client import send_dm
         send_dm(
             f"\U0001f4e5 *Onboarding complete*\n"
-            f"Processed {total_new} emails from the last 3 months.\n"
+            f"New emails: {total_new} | Re-triaged: {total_backfilled}\n"
             f"{total_needs_reply} email(s) need your reply.\n"
             f"Type \"needs reply\" to see them."
         )
@@ -136,8 +137,9 @@ def _onboard_single_account(account) -> dict:
 
         new_ids = upsert_emails(orm_objects)
 
-        # Backfill needs_reply for existing emails that were never triaged
-        from lib.db import bulk_update_needs_reply, get_untriaged_emails
+        # Reset and re-triage needs_reply for all primary emails
+        from lib.db import bulk_update_needs_reply, get_untriaged_emails, reset_needs_reply
+        reset_needs_reply(account.id)
         untriaged = get_untriaged_emails(account.id, limit=200)
         if untriaged:
             # Convert ORM to model for LLM triage
