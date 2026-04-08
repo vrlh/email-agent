@@ -27,36 +27,24 @@ def _owner_dm_channel() -> str:
 # ---------------------------------------------------------------------------
 
 
-# Set by the event handler so replies go to the same conversation
-_active_channel: str = ""
-
-
-def set_active_channel(channel: str) -> None:
-    global _active_channel
-    _active_channel = channel
-
-
-def send_to_channel(
-    channel: str,
-    text: str,
-    blocks: Optional[List[Dict[str, Any]]] = None,
-) -> str:
-    """Send a message to a specific channel.  Returns the message ts."""
-    client = _get_client()
-    if not channel:
-        channel = _owner_dm_channel()
-    resp = client.chat_postMessage(
-        channel=channel, text=text, blocks=blocks
-    )
-    return resp["ts"]
-
-
 def send_dm(
     text: str,
     blocks: Optional[List[Dict[str, Any]]] = None,
+    channel: Optional[str] = None,
 ) -> str:
-    """Send a DM to the owner.  Returns the message timestamp (ts)."""
-    return send_to_channel(_active_channel, text, blocks)
+    """Send a DM to the owner.  Returns the message timestamp (ts).
+
+    If *channel* is provided, posts there directly.  Otherwise uses
+    conversations_open to find/create the DM channel.
+    """
+    client = _get_client()
+    ch = channel or _owner_dm_channel()
+    resp = client.chat_postMessage(channel=ch, text=text, blocks=blocks)
+    return resp["ts"]
+
+
+# Alias used by the event handler when channel is known
+send_to_channel = send_dm  # same signature, channel kwarg
 
 
 def update_message(

@@ -141,8 +141,8 @@ class handler(BaseHTTPRequestHandler):
 # ======================================================================
 
 def _send_error(detail: str, channel: str = ""):
-    from lib.slack_client import send_to_channel
-    send_to_channel(channel, f"\u26a0\ufe0f Something went wrong: {detail}")
+    from lib.slack_client import send_dm
+    send_dm(f"\u26a0\ufe0f Something went wrong: {detail}", channel=channel)
 
 
 # Simple keyword matching as fallback when LLM is unavailable
@@ -157,12 +157,19 @@ _KEYWORD_INTENTS = {
 }
 
 
+_reply_channel: str = ""
+
+
+def _reply(text: str, blocks=None) -> str:
+    """Send a reply to the current conversation channel."""
+    from lib.slack_client import send_dm
+    return send_dm(text, blocks=blocks, channel=_reply_channel)
+
+
 def _process_command(text: str, channel: str = ""):
     """Parse intent and route to the appropriate handler."""
-    from lib.slack_client import send_to_channel, set_active_channel
-
-    # Store channel so send_dm() replies to the same conversation
-    set_active_channel(channel)
+    global _reply_channel
+    _reply_channel = channel
 
     # Try simple keyword match first (free, instant, no LLM needed)
     text_lower = text.strip().lower()
@@ -178,8 +185,7 @@ def _process_command(text: str, channel: str = ""):
             params = cmd.params
         except Exception as exc:
             logger.error(f"LLM parse failed: {exc}")
-            send_to_channel(
-                channel,
+            _reply(
                 f"\u26a0\ufe0f LLM parsing failed: {exc}\n\n"
                 "Simple commands still work: status, list, help, send, cancel"
             )
@@ -203,8 +209,7 @@ def _process_command(text: str, channel: str = ""):
     if handler_fn:
         handler_fn(params)
     else:
-        send_to_channel(
-            channel,
+        _reply(
             "I didn't understand that. Try:\n"
             "\u2022 \"list unread\"\n"
             "\u2022 \"summarize #3\"\n"
@@ -240,11 +245,11 @@ def _build_context() -> str:
 
 def _cmd_list(params: dict):
     from lib.db import get_active_accounts, get_emails_for_account
-    from lib.slack_client import build_email_list_blocks, send_dm
+    from lib.slack_client import build_email_list_blocks
 
     accounts = get_active_accounts()
     if not accounts:
-        send_dm("No Gmail accounts connected. Add one at /api/auth/gmail_start")
+        _reply("No Gmail accounts connected. Add one at /api/auth/gmail_start")
         return
 
     filter_type = params.get("filter", "unread")
@@ -281,36 +286,36 @@ def _cmd_list(params: dict):
         ))
 
     blocks = build_email_list_blocks(model_emails, account_map)
-    send_dm(f"{len(model_emails)} email(s)", blocks=blocks)
+    _reply(f"{len(model_emails)} email(s)", blocks=blocks)
 
 
 def _cmd_summarize(params: dict):
     from lib.llm import summarize_email
-    from lib.slack_client import build_summary_blocks, send_dm
+    from lib.slack_client import build_summary_blocks
 
     email, model_email = _resolve_email_ref(params.get("ref", "#1"))
     if not email:
-        send_dm("Couldn't find that email.")
+        _reply("Couldn't find that email.")
         return
 
     summary = summarize_email(model_email)
     blocks = build_summary_blocks(model_email, summary)
-    send_dm(f"Summary: {model_email.subject}", blocks=blocks)
+    _reply(f"Summary: {model_email.subject}", blocks=blocks)
 
 
 def _cmd_reply(params: dict):
     from lib.llm import generate_draft
     from lib.db import create_pending_draft, get_active_accounts
-    from lib.slack_client import build_draft_review_blocks, send_dm
+    from lib.slack_client import build_draft_review_blocks
 
     email_orm, model_email = _resolve_email_ref(params.get("ref", "#1"))
     if not email_orm:
-        send_dm("Couldn't find that email.")
+        _reply("Couldn't find that email.")
         return
 
     message = params.get("message", "")
     if not message:
-        send_dm("What should the reply say? e.g. \"reply to #1 saying I'll be there\"")
+        _reply("What should the reply say? e.g. \"reply to #1 saying I'll be there\"")
         return
 
     # Find the account email
@@ -341,7 +346,7 @@ def _cmd_reply(params: dict):
         subject=draft_content.subject,
         body=draft_content.body_text,
     )
-    ts = send_dm(f"Draft reply to {model_email.sender.email}", blocks=blocks)
+    ts = _reply(f"Draft reply to {model_email.sender.email}", blocks=blocks)
 
     # Store the Slack message ts so we can update it later
     from lib.db import update_draft_slack_ts
@@ -351,19 +356,18 @@ def _cmd_reply(params: dict):
 def _cmd_archive(params: dict):
     from lib.db import get_active_accounts, get_email_by_id
     from lib.gmail import archive_email, credentials_from_encrypted, refresh_if_needed
-    from lib.slack_client import send_dm
 
     refs = params.get("refs", [])
     if isinstance(refs, str):
         refs = [refs]
 
     if not refs:
-        send_dm("Which email(s)? e.g. \"archive #2\" or \"archive #2 through #5\"")
+        _reply("Which email(s)? e.g. \"archive #2\" or \"archive #2 through #5\"")
         return
 
     email_ids = _resolve_refs_to_ids(refs)
     if not email_ids:
-        send_dm("Couldn't find those emails.")
+        _reply("Couldn't find those emails.")
         return
 
     accounts = {a.id: a for a in get_active_accounts()}
@@ -380,7 +384,7 @@ def _cmd_archive(params: dict):
         if archive_email(creds, eid):
             archived += 1
 
-    send_dm(f"\U0001f5c4\ufe0f Archived {archived} email(s).")
+    _reply(f"\U0001f5c4\ufe0f Archived {archived} email(s).")
 
 
 def _cmd_send(params: dict):
@@ -405,7 +409,7 @@ def _cmd_cancel(params: dict):
 def _cmd_edit(params: dict):
     from lib.llm import edit_draft as claude_edit
     from lib.db import get_pending_draft, update_draft_body
-    from lib.slack_client import build_draft_review_blocks, send_dm
+    from lib.slack_client import build_draft_review_blocks
 
     draft = get_pending_draft()
     if not draft:
@@ -414,7 +418,7 @@ def _cmd_edit(params: dict):
 
     instruction = params.get("instruction", "")
     if not instruction:
-        send_dm("What should I change? e.g. \"edit: change Thursday to Friday\"")
+        _reply("What should I change? e.g. \"edit: change Thursday to Friday\"")
         return
 
     new_body = claude_edit(draft.body_text, instruction)
@@ -435,12 +439,12 @@ def _cmd_edit(params: dict):
         subject=draft.subject,
         body=new_body,
     )
-    send_dm(f"Updated draft", blocks=blocks)
+    _reply(f"Updated draft", blocks=blocks)
 
 
 def _cmd_status(params: dict):
     from lib.db import get_active_accounts, get_pending_draft
-    from lib.slack_client import build_status_blocks, send_dm
+    from lib.slack_client import build_status_blocks
 
     accounts = get_active_accounts()
     acct_data = []
@@ -452,12 +456,11 @@ def _cmd_status(params: dict):
 
     draft = get_pending_draft()
     blocks = build_status_blocks(acct_data, pending_draft=draft is not None)
-    send_dm("Status", blocks=blocks)
+    _reply("Status", blocks=blocks)
 
 
 def _cmd_help(params: dict):
-    from lib.slack_client import send_dm
-    send_dm(
+    _reply(
         "*Available commands:*\n"
         "\u2022 \"list\" / \"list unread\" / \"what needs my attention?\"\n"
         "\u2022 \"summarize #3\" / \"summarize the email from Sarah\"\n"
@@ -478,14 +481,14 @@ def _cmd_help(params: dict):
 def _handle_send(draft_id: str):
     from lib.db import get_active_accounts, update_draft_status
     from lib.gmail import credentials_from_encrypted, refresh_if_needed, send_reply, send_new_email
-    from lib.slack_client import build_sent_confirmation_blocks, send_dm, update_message
+    from lib.slack_client import build_sent_confirmation_blocks, update_message
 
     from lib.db import get_session
     from lib.db_models import PendingDraftORM
     with get_session() as session:
         draft = session.get(PendingDraftORM, draft_id)
         if not draft or draft.status != "pending":
-            send_dm("No pending draft to send.")
+            _reply("No pending draft to send.")
             return
 
         # Copy values before leaving session
@@ -500,7 +503,7 @@ def _handle_send(draft_id: str):
     accounts = {a.id: a for a in get_active_accounts()}
     acct = accounts.get(d_account_id)
     if not acct:
-        send_dm("Account not found.")
+        _reply("Account not found.")
         return
 
     creds = credentials_from_encrypted(acct.encrypted_tokens)
@@ -525,21 +528,21 @@ def _handle_send(draft_id: str):
         try:
             update_message(d_slack_ts, f"Email sent to {to_email}", blocks=blocks)
         except Exception:
-            send_dm(f"\u2705 Email sent to {to_email}", blocks=blocks)
+            _reply(f"\u2705 Email sent to {to_email}", blocks=blocks)
     else:
-        send_dm(f"\u2705 Email sent to {to_email}", blocks=blocks)
+        _reply(f"\u2705 Email sent to {to_email}", blocks=blocks)
 
 
 def _handle_cancel(draft_id: str):
     from lib.db import update_draft_status
-    from lib.slack_client import build_cancelled_blocks, send_dm, update_message
+    from lib.slack_client import build_cancelled_blocks, update_message
 
     from lib.db import get_session
     from lib.db_models import PendingDraftORM
     with get_session() as session:
         draft = session.get(PendingDraftORM, draft_id)
         if not draft or draft.status != "pending":
-            send_dm("No pending draft to cancel.")
+            _reply("No pending draft to cancel.")
             return
         slack_ts = draft.slack_message_ts
 
@@ -550,9 +553,9 @@ def _handle_cancel(draft_id: str):
         try:
             update_message(slack_ts, "Draft cancelled.", blocks=blocks)
         except Exception:
-            send_dm("Draft cancelled.", blocks=blocks)
+            _reply("Draft cancelled.", blocks=blocks)
     else:
-        send_dm("Draft cancelled.", blocks=blocks)
+        _reply("Draft cancelled.", blocks=blocks)
 
 
 # ======================================================================
@@ -561,8 +564,7 @@ def _handle_cancel(draft_id: str):
 
 
 def _no_pending_draft():
-    from lib.slack_client import send_dm
-    send_dm("No pending draft. Use \"reply to #N saying ...\" to create one.")
+    _reply("No pending draft. Use \"reply to #N saying ...\" to create one.")
 
 
 def _resolve_email_ref(ref: str):
