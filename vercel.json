@@ -1,7 +1,9 @@
 {
+  "framework": null,
   "functions": {
     "api/**/*.py": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "runtime": "@vercel/python@4.5.0"
     }
   }
 }
