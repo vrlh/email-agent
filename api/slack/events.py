@@ -161,6 +161,8 @@ _KEYWORD_INTENTS = {
     "list": "list",
     "list unread": "list",
     "list all": "list",
+    "rules": "list_rules",
+    "list rules": "list_rules",
 }
 
 
@@ -212,6 +214,10 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         "edit": _cmd_edit,
         "status": _cmd_status,
         "help": _cmd_help,
+        "ignore": _cmd_ignore,
+        "priority_sender": _cmd_priority_sender,
+        "list_rules": _cmd_list_rules,
+        "delete_rule": _cmd_delete_rule,
     }
 
     handler_fn = routes.get(intent)
@@ -478,8 +484,87 @@ def _cmd_help(params: dict):
         "\u2022 \"send\" \u2014 confirm pending draft\n"
         "\u2022 \"cancel\" \u2014 cancel pending draft\n"
         "\u2022 \"edit: change Thursday to Friday\" \u2014 modify pending draft\n"
-        "\u2022 \"status\" \u2014 account info and sync times"
+        "\u2022 \"status\" \u2014 account info and sync times\n"
+        "\u2022 \"ignore emails from linkedin.com\" \u2014 auto-archive matching emails\n"
+        "\u2022 \"always notify me about emails from boss@co.com\" \u2014 always surface\n"
+        "\u2022 \"rules\" \u2014 list your rules\n"
+        "\u2022 \"delete rule #2\" \u2014 remove a rule"
     )
+
+
+def _cmd_ignore(params: dict):
+    """Create an ignore rule: auto-archive emails matching a pattern."""
+    from lib.db import create_user_rule
+
+    field = params.get("field", "sender_domain")
+    operator = params.get("operator", "contains")
+    value = params.get("value", "")
+
+    if not value:
+        _reply("What should I ignore? e.g. \"ignore emails from linkedin.com\"")
+        return
+
+    rule = create_user_rule(
+        rule_type="ignore",
+        field=field,
+        operator=operator,
+        value=value,
+        action="auto_archive",
+    )
+    _reply(f"\U0001f6ab Rule created: ignore emails where {field} {operator} `{value}`")
+
+
+def _cmd_priority_sender(params: dict):
+    """Create a priority rule: always notify for matching emails."""
+    from lib.db import create_user_rule
+
+    field = params.get("field", "sender")
+    operator = params.get("operator", "contains")
+    value = params.get("value", "")
+
+    if not value:
+        _reply("Who should I prioritize? e.g. \"always notify me about emails from boss@company.com\"")
+        return
+
+    rule = create_user_rule(
+        rule_type="priority",
+        field=field,
+        operator=operator,
+        value=value,
+        action="boost",
+    )
+    _reply(f"\u2b50 Rule created: always notify when {field} {operator} `{value}`")
+
+
+def _cmd_list_rules(params: dict):
+    from lib.db import get_user_rules
+    from lib.slack_client import build_rules_list_blocks
+
+    rules = get_user_rules()
+    blocks = build_rules_list_blocks(rules)
+    _reply("Your rules", blocks=blocks)
+
+
+def _cmd_delete_rule(params: dict):
+    from lib.db import get_user_rules, delete_user_rule
+
+    ref = params.get("ref", "")
+    if not ref:
+        _reply("Which rule? e.g. \"delete rule #2\"")
+        return
+
+    # Resolve #N to rule ID
+    try:
+        idx = int(ref.replace("#", "")) - 1
+        rules = get_user_rules()
+        if 0 <= idx < len(rules):
+            rule = rules[idx]
+            delete_user_rule(rule.id)
+            _reply(f"\U0001f5d1\ufe0f Deleted rule: {rule.rule_type} {rule.field} {rule.operator} `{rule.value}`")
+        else:
+            _reply(f"Rule #{idx + 1} not found. Use \"rules\" to see your rules.")
+    except ValueError:
+        _reply("Use a number, e.g. \"delete rule #2\"")
 
 
 # ======================================================================

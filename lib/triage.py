@@ -111,6 +111,54 @@ def _score_sender(email: Email) -> float:
 
 
 # ---------------------------------------------------------------------------
+# User rules
+# ---------------------------------------------------------------------------
+
+
+def _apply_user_rules(email: Email) -> Optional[TriageDecision]:
+    """Check user rules. Returns a forced decision, or None to continue normal scoring."""
+    import re
+    from lib.db import get_user_rules
+
+    rules = get_user_rules(enabled_only=True)
+    sender = email.sender.email.lower()
+    sender_domain = sender.split("@")[-1] if "@" in sender else ""
+    subject = email.subject.lower()
+
+    for rule in rules:
+        val = rule.value.lower()
+        # Get the field to match against
+        if rule.field == "sender":
+            target = sender
+        elif rule.field == "sender_domain":
+            target = sender_domain
+        elif rule.field == "subject":
+            target = subject
+        else:
+            continue
+
+        # Check if it matches
+        matched = False
+        if rule.operator == "contains":
+            matched = val in target
+        elif rule.operator == "equals":
+            matched = target == val
+        elif rule.operator == "regex":
+            try:
+                matched = bool(re.search(val, target, re.IGNORECASE))
+            except re.error:
+                pass
+
+        if matched:
+            if rule.action == "auto_archive":
+                return TriageDecision.AUTO_ARCHIVED
+            elif rule.action == "boost":
+                return TriageDecision.NEEDS_ATTENTION
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -128,6 +176,11 @@ def score_email(email: Email) -> float:
 
 def decide(email: Email, score: Optional[float] = None) -> TriageDecision:
     """Map an attention score to a triage decision."""
+    # User rules take priority over everything
+    user_override = _apply_user_rules(email)
+    if user_override is not None:
+        return user_override
+
     if score is None:
         score = score_email(email)
 

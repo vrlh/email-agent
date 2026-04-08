@@ -105,6 +105,23 @@ class PendingDraftORM(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class UserRuleORM(Base):
+    __tablename__ = "user_rules"
+
+    id = Column(String, primary_key=True)
+    rule_type = Column(String, nullable=False)  # "ignore" or "priority"
+    field = Column(String, nullable=False)  # "sender", "sender_domain", "subject"
+    operator = Column(String, nullable=False)  # "contains", "equals", "regex"
+    value = Column(String, nullable=False)
+    action = Column(String, nullable=False)  # "auto_archive" or "boost"
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class SyncLogORM(Base):
     __tablename__ = "sync_log"
 

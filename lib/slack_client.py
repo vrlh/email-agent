@@ -13,8 +13,12 @@ def _get_client() -> WebClient:
     return WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 
 
-def _owner_dm_channel() -> str:
-    """Open (or retrieve) the DM channel with the owner."""
+def _default_channel() -> str:
+    """Return the dedicated bot channel, falling back to owner DM."""
+    channel = os.environ.get("SLACK_CHANNEL_ID", "")
+    if channel:
+        return channel
+    # Fallback to DM if no channel configured
     client = _get_client()
     resp = client.conversations_open(
         users=[os.environ["OWNER_SLACK_USER_ID"]]
@@ -40,7 +44,7 @@ def send_dm(
     If *thread_ts* is provided, replies in that thread.
     """
     client = _get_client()
-    ch = channel or _owner_dm_channel()
+    ch = channel or _default_channel()
     kwargs: Dict[str, Any] = {"channel": ch, "text": text}
     if blocks:
         kwargs["blocks"] = blocks
@@ -57,7 +61,7 @@ def update_message(
 ) -> None:
     """Update an existing Slack message by its timestamp."""
     client = _get_client()
-    channel = _owner_dm_channel()
+    channel = _default_channel()
     client.chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
 
 
@@ -68,7 +72,7 @@ def reply_in_thread(
 ) -> str:
     """Reply in a thread.  Returns the new message ts."""
     client = _get_client()
-    channel = _owner_dm_channel()
+    channel = _default_channel()
     resp = client.chat_postMessage(
         channel=channel, text=text, blocks=blocks, thread_ts=thread_ts,
     )
@@ -269,6 +273,63 @@ def build_status_blocks(
         sync = acct.get("last_sync", "never")
         lines.append(f"\u2022 *{acct['email']}* \u2014 last sync: {sync}")
     lines.append(f"\nPending draft: {'Yes' if pending_draft else 'None'}")
+    return [_text_block("\n".join(lines))]
+
+
+def build_cron_summary_blocks(
+    emails_by_account: Dict[str, List[Dict[str, Any]]],
+    total_archived: int,
+) -> List[Dict[str, Any]]:
+    """Build a single summary message for all attention-needed emails from a cron run.
+
+    *emails_by_account* maps account_email -> list of dicts with keys:
+        subject, sender_email, priority, summary
+    """
+    total = sum(len(v) for v in emails_by_account.values())
+    if total == 0:
+        return [_text_block("\u2705 No new emails need attention.")]
+
+    blocks: List[Dict[str, Any]] = [
+        _text_block(f"\U0001f4ec *{total} new email(s) need attention*"),
+    ]
+
+    idx = 1
+    for acct_email, emails in emails_by_account.items():
+        if not emails:
+            continue
+        lines = [f"\n*{acct_email}* ({len(emails)}):"]
+        for e in emails:
+            emoji = _PRIORITY_EMOJI.get(e.get("priority", "normal"), "\U0001f4e7")
+            summary = e.get("summary", "")
+            summary_line = f"\n   {summary}" if summary else ""
+            lines.append(
+                f"{emoji} *#{idx}* {e['subject']} \u2014 {e['sender_email']}{summary_line}"
+            )
+            idx += 1
+
+        chunk = "\n".join(lines)
+        blocks.append(_text_block(chunk))
+
+    if total_archived > 0:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"{total_archived} email(s) auto-archived"},
+            ],
+        })
+
+    return blocks
+
+
+def build_rules_list_blocks(rules: list) -> List[Dict[str, Any]]:
+    """Build blocks showing user's active rules."""
+    if not rules:
+        return [_text_block("No rules configured. Try:\n\u2022 \"ignore emails from linkedin.com\"\n\u2022 \"always notify me about emails from boss@company.com\"")]
+
+    lines = ["\U0001f4cb *Your rules:*\n"]
+    for i, r in enumerate(rules, 1):
+        type_emoji = "\U0001f6ab" if r.rule_type == "ignore" else "\u2b50"
+        lines.append(f"{type_emoji} *#{i}* {r.rule_type}: {r.field} {r.operator} `{r.value}`")
     return [_text_block("\n".join(lines))]
 
 

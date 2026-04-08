@@ -10,12 +10,15 @@ from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
+from sqlalchemy import delete as sql_delete
+
 from lib.db_models import (
     Base,
     EmailORM,
     GmailAccountORM,
     PendingDraftORM,
     SyncLogORM,
+    UserRuleORM,
 )
 
 _engine = None
@@ -314,3 +317,49 @@ def complete_sync_log(
             log.status = status
             log.error_message = error_message
             log.completed_at = datetime.now(timezone.utc)
+
+
+# ── User Rules ──
+
+
+def create_user_rule(
+    rule_type: str,
+    field: str,
+    operator: str,
+    value: str,
+    action: str,
+) -> UserRuleORM:
+    with get_session() as session:
+        rule = UserRuleORM(
+            id=str(uuid.uuid4()),
+            rule_type=rule_type,
+            field=field,
+            operator=operator,
+            value=value,
+            action=action,
+        )
+        session.add(rule)
+        session.flush()
+        session.expunge(rule)
+        return rule
+
+
+def get_user_rules(enabled_only: bool = True) -> List[UserRuleORM]:
+    with get_session() as session:
+        stmt = select(UserRuleORM)
+        if enabled_only:
+            stmt = stmt.where(UserRuleORM.enabled.is_(True))
+        stmt = stmt.order_by(UserRuleORM.created_at)
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+def delete_user_rule(rule_id: str) -> bool:
+    with get_session() as session:
+        rule = session.get(UserRuleORM, rule_id)
+        if rule:
+            session.delete(rule)
+            return True
+        return False

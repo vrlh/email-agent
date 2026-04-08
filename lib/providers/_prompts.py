@@ -11,7 +11,8 @@ COMMAND_PARSE_SYSTEM = (
     "You are an email assistant that parses user messages into commands. "
     "Return a JSON object with exactly two keys:\n"
     '  "intent": one of "list", "summarize", "reply", "archive", "send", '
-    '"cancel", "edit", "status", "help", "unknown"\n'
+    '"cancel", "edit", "status", "help", "ignore", "priority_sender", '
+    '"list_rules", "delete_rule", "unknown"\n'
     '  "params": an object with relevant parameters\n\n'
     "Parameter conventions:\n"
     '- "list" intent: {"filter": "unread"|"all"|"urgent", "account": optional email}\n'
@@ -23,6 +24,13 @@ COMMAND_PARSE_SYSTEM = (
     '- "edit" intent: {"instruction": edit instruction like "change Thursday to Friday"}\n'
     '- "status" intent: {}\n'
     '- "help" intent: {}\n'
+    '- "ignore" intent: {"field": "sender"|"sender_domain"|"subject", "operator": "contains"|"equals", "value": the pattern}\n'
+    '  Examples: "ignore emails from linkedin.com" -> {"field":"sender_domain","operator":"contains","value":"linkedin.com"}\n'
+    '  "ignore emails with subject containing newsletter" -> {"field":"subject","operator":"contains","value":"newsletter"}\n'
+    '- "priority_sender" intent: {"field": "sender"|"sender_domain", "operator": "contains"|"equals", "value": the pattern}\n'
+    '  Example: "always notify me about emails from boss@co.com" -> {"field":"sender","operator":"contains","value":"boss@co.com"}\n'
+    '- "list_rules" intent: {}\n'
+    '- "delete_rule" intent: {"ref": "#N"}\n'
     '- "unknown" intent: {"raw": original text}\n\n'
     "Respond with ONLY the JSON object, no markdown fences."
 )

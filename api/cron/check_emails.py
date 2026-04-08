@@ -69,19 +69,28 @@ def _run_pipeline() -> dict:
 
     results = []
     total_new = 0
-    total_notified = 0
+    all_attention_emails: dict = {}  # account_email -> list of email dicts
+    total_archived = 0
 
     for account in accounts:
         result = _process_account(account)
         results.append(result)
         total_new += result.get("new", 0)
-        total_notified += result.get("notified", 0)
+
+        # Collect attention emails for summary
+        attention = result.get("attention_emails", [])
+        if attention:
+            all_attention_emails[account.email_address] = attention
+        total_archived += result.get("archived", 0)
+
+    # ── Send single summary notification ──
+    notified = _send_summary(all_attention_emails, total_archived)
 
     return {
         "status": "ok",
         "accounts_processed": len(results),
         "total_new_emails": total_new,
-        "total_notifications_sent": total_notified,
+        "total_notifications_sent": notified,
         "drafts_expired": expired_count,
         "details": results,
     }
@@ -169,9 +178,14 @@ def _process_account(account) -> dict:
 
         new_ids = upsert_emails(orm_objects)
 
-        # ── 6. Notify (only for newly inserted emails) ──
+        # ── 6. Collect attention emails (for summary notification) ──
         new_emails = [e for e in emails if e.id in new_ids]
-        notified = _send_notifications(account.email_address, new_emails, triage_map)
+        attention_emails, archived_count = _collect_attention_emails(new_emails, triage_map)
+
+        # Mark notified
+        from lib.db import mark_email_notified
+        for ae in attention_emails:
+            mark_email_notified(ae["id"])
 
         # ── 7. Update sync state ──
         update_account_sync(account.id, new_history_id)
@@ -181,7 +195,8 @@ def _process_account(account) -> dict:
             "account": account.email_address,
             "fetched": len(emails),
             "new": len(new_ids),
-            "notified": notified,
+            "attention_emails": attention_emails,
+            "archived": archived_count,
         }
 
     except Exception as exc:
@@ -219,38 +234,50 @@ def _default_decision(email) -> str:
     return "needs_attention"
 
 
-def _send_notifications(account_email: str, emails, triage_map: dict) -> int:
-    """Send individual Slack DMs for emails that need attention. Returns count."""
+def _collect_attention_emails(emails, triage_map: dict) -> tuple:
+    """Collect emails needing attention into dicts for the summary. Returns (attention_list, archived_count)."""
     from lib.models import TriageDecision
-    from lib.slack_client import build_email_notification_blocks, send_dm
 
-    notified = 0
+    attention = []
+    archived = 0
     for e in emails:
         triage = triage_map.get(e.id)
-
-        # Determine if this email needs a notification
         if triage:
             if triage.decision != TriageDecision.NEEDS_ATTENTION:
+                archived += 1
                 continue
-            summary = triage.summary
-            suggested = triage.suggested_action
+            attention.append({
+                "id": e.id,
+                "subject": e.subject,
+                "sender_email": e.sender.email,
+                "priority": triage.decision.value if hasattr(triage, "decision") else "normal",
+                "summary": triage.summary,
+            })
         else:
-            # Non-primary emails: only notify if urgent priority
-            if e.priority.value != "urgent":
-                continue
-            summary = e.subject
-            suggested = None
+            if e.priority.value == "urgent":
+                attention.append({
+                    "id": e.id,
+                    "subject": e.subject,
+                    "sender_email": e.sender.email,
+                    "priority": e.priority.value,
+                    "summary": e.subject,
+                })
+            else:
+                archived += 1
+    return attention, archived
 
-        blocks = build_email_notification_blocks(e, account_email, summary, suggested)
-        send_dm(f"New email: {e.subject}", blocks=blocks)
 
-        # Mark as notified so we don't re-send on next run
-        from lib.db import mark_email_notified
-        mark_email_notified(e.id)
+def _send_summary(emails_by_account: dict, total_archived: int) -> int:
+    """Send a single summary message to the channel. Returns count of emails notified."""
+    from lib.slack_client import build_cron_summary_blocks, send_dm
 
-        notified += 1
+    total = sum(len(v) for v in emails_by_account.values())
+    if total == 0:
+        return 0
 
-    return notified
+    blocks = build_cron_summary_blocks(emails_by_account, total_archived)
+    send_dm(f"{total} new email(s) need attention", blocks=blocks)
+    return total
 
 
 def _notify_expired_drafts(count: int):
