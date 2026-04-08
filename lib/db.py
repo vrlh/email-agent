@@ -63,13 +63,16 @@ def create_tables():
 
 def get_active_accounts() -> List[GmailAccountORM]:
     with get_session() as session:
-        return list(
+        results = list(
             session.execute(
                 select(GmailAccountORM).where(GmailAccountORM.is_active.is_(True))
             )
             .scalars()
             .all()
         )
+        for r in results:
+            session.expunge(r)
+        return results
 
 
 def upsert_account(

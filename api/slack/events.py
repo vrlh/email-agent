@@ -94,6 +94,7 @@ class handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_interactive(self, body: bytes):
+        global _reply_channel
         form = parse_qs(body.decode())
         payload = json.loads(form.get("payload", ["{}"])[0])
 
@@ -101,6 +102,9 @@ class handler(BaseHTTPRequestHandler):
         if not is_owner(user_id):
             self._ok()
             return
+
+        # Set reply channel from the interactive payload
+        _reply_channel = payload.get("channel", {}).get("id", "")
 
         actions = payload.get("actions", [])
         if not actions:
@@ -118,7 +122,7 @@ class handler(BaseHTTPRequestHandler):
                 _handle_cancel(draft_id)
         except Exception as exc:
             logger.error(f"Interactive action error: {exc}")
-            _send_error(str(exc))
+            _send_error(str(exc), _reply_channel)
 
         self._ok()
 
