@@ -81,11 +81,12 @@ class handler(BaseHTTPRequestHandler):
 
         # Process the command — results are posted via Slack Web API
         channel = event.get("channel", "")
+        thread_ts = event.get("thread_ts") or event.get("ts", "")
         try:
-            _process_command(text, channel)
+            _process_command(text, channel, thread_ts)
         except Exception as exc:
             logger.error(f"Command processing error: {exc}")
-            _send_error(str(exc), channel)
+            _send_error(str(exc), channel, thread_ts)
 
         self._ok()
 
@@ -94,7 +95,7 @@ class handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_interactive(self, body: bytes):
-        global _reply_channel
+        global _reply_channel, _reply_thread_ts
         form = parse_qs(body.decode())
         payload = json.loads(form.get("payload", ["{}"])[0])
 
@@ -103,8 +104,10 @@ class handler(BaseHTTPRequestHandler):
             self._ok()
             return
 
-        # Set reply channel from the interactive payload
+        # Set reply channel and thread from the interactive payload
         _reply_channel = payload.get("channel", {}).get("id", "")
+        msg = payload.get("message", {})
+        _reply_thread_ts = msg.get("thread_ts") or msg.get("ts", "")
 
         actions = payload.get("actions", [])
         if not actions:
@@ -144,9 +147,9 @@ class handler(BaseHTTPRequestHandler):
 # Command processing (runs after 200 is queued)
 # ======================================================================
 
-def _send_error(detail: str, channel: str = ""):
+def _send_error(detail: str, channel: str = "", thread_ts: str = ""):
     from lib.slack_client import send_dm
-    send_dm(f"\u26a0\ufe0f Something went wrong: {detail}", channel=channel)
+    send_dm(f"\u26a0\ufe0f Something went wrong: {detail}", channel=channel, thread_ts=thread_ts)
 
 
 # Simple keyword matching as fallback when LLM is unavailable
@@ -162,18 +165,20 @@ _KEYWORD_INTENTS = {
 
 
 _reply_channel: str = ""
+_reply_thread_ts: str = ""
 
 
 def _reply(text: str, blocks=None) -> str:
-    """Send a reply to the current conversation channel."""
+    """Send a threaded reply to the user's message."""
     from lib.slack_client import send_dm
-    return send_dm(text, blocks=blocks, channel=_reply_channel)
+    return send_dm(text, blocks=blocks, channel=_reply_channel, thread_ts=_reply_thread_ts)
 
 
-def _process_command(text: str, channel: str = ""):
+def _process_command(text: str, channel: str = "", thread_ts: str = ""):
     """Parse intent and route to the appropriate handler."""
-    global _reply_channel
+    global _reply_channel, _reply_thread_ts
     _reply_channel = channel
+    _reply_thread_ts = thread_ts
 
     # Try simple keyword match first (free, instant, no LLM needed)
     text_lower = text.strip().lower()

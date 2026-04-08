@@ -31,20 +31,23 @@ def send_dm(
     text: str,
     blocks: Optional[List[Dict[str, Any]]] = None,
     channel: Optional[str] = None,
+    thread_ts: Optional[str] = None,
 ) -> str:
     """Send a DM to the owner.  Returns the message timestamp (ts).
 
     If *channel* is provided, posts there directly.  Otherwise uses
     conversations_open to find/create the DM channel.
+    If *thread_ts* is provided, replies in that thread.
     """
     client = _get_client()
     ch = channel or _owner_dm_channel()
-    resp = client.chat_postMessage(channel=ch, text=text, blocks=blocks)
+    kwargs: Dict[str, Any] = {"channel": ch, "text": text}
+    if blocks:
+        kwargs["blocks"] = blocks
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    resp = client.chat_postMessage(**kwargs)
     return resp["ts"]
-
-
-# Alias used by the event handler when channel is known
-send_to_channel = send_dm  # same signature, channel kwarg
 
 
 def update_message(
