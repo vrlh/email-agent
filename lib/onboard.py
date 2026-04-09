@@ -43,14 +43,18 @@ def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> 
 
     total_new = sum(r.get("new", 0) for r in results)
     total_backfilled = sum(r.get("backfilled", 0) for r in results)
+    total_ai_flagged = sum(r.get("ai_flagged_needs_reply", 0) for r in results)
+    total_gmail_replied = sum(r.get("gmail_marked_replied", 0) for r in results)
     total_needs_reply = sum(r.get("needs_reply", 0) for r in results)
 
     if notify_slack:
         from lib.slack_client import send_dm
         send_dm(
             f"\U0001f4e5 *Onboarding complete*\n"
-            f"New emails: {total_new} | Re-triaged: {total_backfilled}\n"
-            f"{total_needs_reply} email(s) need your reply.\n"
+            f"New: {total_new} | Re-triaged: {total_backfilled}\n"
+            f"AI flagged needs reply: {total_ai_flagged}\n"
+            f"Already replied (Gmail check): {total_gmail_replied}\n"
+            f"*{total_needs_reply} email(s) still need your reply.*\n"
             f"Type \"needs reply\" to see them."
         )
 
@@ -153,27 +157,35 @@ def _onboard_single_account(account) -> dict:
                     category=EmailCategory(u.category) if u.category else EmailCategory.PRIMARY,
                 ))
             backfill_triage = _triage_batch(model_emails)
+            flagged_by_ai = 0
             updates = []
             for u in untriaged:
                 t = backfill_triage.get(u.id)
+                nr = t.needs_reply if t else False
+                if nr:
+                    flagged_by_ai += 1
                 updates.append({
                     "id": u.id,
-                    "needs_reply": t.needs_reply if t else False,
+                    "needs_reply": nr,
                     "summary": t.summary if t else None,
                 })
             bulk_update_needs_reply(updates)
+        else:
+            flagged_by_ai = 0
 
         # Check reply status for all needs_reply emails (new + backfilled)
         from lib.db import get_unreplied_thread_ids
         unreplied = get_unreplied_thread_ids(account.id)
         needs_reply_count = 0
         reply_checks = 0
+        marked_replied = 0
         for item in unreplied:
             reply_checks += 1
             if reply_checks % 10 == 0:
                 time.sleep(1)
             if check_thread_replied(creds, item["thread_id"], account.email_address, after_msg_id=item["email_id"]):
                 mark_email_replied(item["email_id"])
+                marked_replied += 1
             else:
                 needs_reply_count += 1
 
@@ -185,6 +197,8 @@ def _onboard_single_account(account) -> dict:
             "fetched": len(emails),
             "new": len(new_ids),
             "backfilled": len(untriaged),
+            "ai_flagged_needs_reply": flagged_by_ai,
+            "gmail_marked_replied": marked_replied,
             "needs_reply": needs_reply_count,
         }
 
