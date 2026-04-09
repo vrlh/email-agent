@@ -207,7 +207,7 @@ def _onboard_single_account(account) -> dict:
         return {"account": account.email_address, "error": str(exc)}
 
 
-def _triage_batch(emails, chunk_size: int = 15) -> dict:
+def _triage_batch(emails, chunk_size: int = 8) -> dict:
     """Triage emails in small chunks to avoid LLM output truncation."""
     all_results = {}
     for i in range(0, len(emails), chunk_size):

@@ -74,6 +74,7 @@ def triage_emails(emails: List[Email]) -> List[TriageResult]:
         text = strip_fences(_chat(
             TRIAGE_SYSTEM,
             build_triage_user_prompt(emails),
+            max_tokens=4096,
         ))
         items = json.loads(text)
         results: List[TriageResult] = []

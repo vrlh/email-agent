@@ -220,7 +220,7 @@ def _process_account(account) -> dict:
 # ======================================================================
 
 
-def _triage_with_fallback(emails, chunk_size: int = 15) -> dict:
+def _triage_with_fallback(emails, chunk_size: int = 8) -> dict:
     """Try LLM triage in chunks, fall back to rule-based."""
     all_results = {}
     for i in range(0, len(emails), chunk_size):
