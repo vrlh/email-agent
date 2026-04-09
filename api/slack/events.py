@@ -178,6 +178,12 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
     try:
         from lib.agent import run_agent
         context = _build_context()
+
+        # If in a thread, fetch conversation history for context
+        thread_history = _get_thread_history(channel, thread_ts)
+        if thread_history:
+            context = f"{context}\n\nConversation so far:\n{thread_history}"
+
         response = run_agent(text, context, _execute_tool)
         if response:
             _reply(response)
@@ -186,6 +192,32 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         _reply(f"\u26a0\ufe0f Agent error: {exc}")
 
 
+
+
+def _get_thread_history(channel: str, thread_ts: str) -> str:
+    """Fetch previous messages in a Slack thread for conversation context."""
+    if not channel or not thread_ts:
+        return ""
+
+    try:
+        from lib.slack_client import _get_client
+        client = _get_client()
+        resp = client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=10,
+        )
+        messages = resp.get("messages", [])
+        if len(messages) <= 1:
+            return ""  # No thread history (just the original message)
+
+        lines = []
+        for msg in messages[:-1]:  # Exclude the current message (already in user_text)
+            who = "Bot" if msg.get("bot_id") else "User"
+            text = msg.get("text", "")[:500]
+            lines.append(f"{who}: {text}")
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def _build_context() -> str:
