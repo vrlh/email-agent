@@ -179,6 +179,7 @@ _KEYWORD_INTENTS = {
 
 _reply_channel: str = ""
 _reply_thread_ts: str = ""
+_last_displayed_emails: list = []  # stores EmailORM objects from last list/needs-reply
 
 
 def _reply(text: str, blocks=None) -> str:
@@ -252,10 +253,10 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
 
 
 def _build_context() -> str:
-    """Build a context string with recent emails so Claude can resolve #N refs."""
+    """Build a context string with last-displayed emails so Claude can resolve #N refs."""
     from lib.db import get_recent_emails, get_pending_draft
 
-    emails = get_recent_emails(limit=20)
+    emails = _last_displayed_emails if _last_displayed_emails else get_recent_emails(limit=50)
     draft = get_pending_draft()
 
     lines = []
@@ -299,6 +300,10 @@ def _cmd_list(params: dict):
     # Sort by date descending
     all_emails.sort(key=lambda e: e.date, reverse=True)
     all_emails = all_emails[:50]
+
+    # Save for #N reference resolution
+    global _last_displayed_emails
+    _last_displayed_emails = all_emails
 
     # Convert ORM objects to model-like dicts for block builder
     from lib.models import Email, EmailAddress, EmailCategory, EmailPriority
@@ -602,6 +607,10 @@ def _cmd_needs_reply(params: dict):
         _reply("\u2705 No emails need your reply right now.")
         return
 
+    # Save for #N reference resolution
+    global _last_displayed_emails
+    _last_displayed_emails = emails
+
     accounts = {a.id: a.email_address for a in get_active_accounts()}
     lines = [f"\u23f3 *{len(emails)} email(s) need your reply:*\n"]
     for i, e in enumerate(emails, 1):
@@ -802,22 +811,29 @@ def _no_pending_draft():
 
 
 def _resolve_email_ref(ref: str):
-    """Resolve a reference like '#3' to an (EmailORM, Email) tuple."""
-    from lib.db import get_email_by_id, get_recent_emails
-    from lib.models import Email, EmailAddress, EmailCategory, EmailPriority
+    """Resolve a reference like '#3' to an (EmailORM, Email) tuple.
+
+    Uses the last-displayed email list so #N matches what the user saw.
+    """
+    from lib.db import get_email_by_id
 
     if not ref:
         return None, None
 
-    # Try #N index into recent emails
+    # Try #N index into last-displayed emails
     if ref.startswith("#"):
         try:
             idx = int(ref[1:]) - 1
-            recent = get_recent_emails(limit=20)
-            if 0 <= idx < len(recent):
-                orm = recent[idx]
+            if _last_displayed_emails and 0 <= idx < len(_last_displayed_emails):
+                orm = _last_displayed_emails[idx]
                 model = _orm_to_model(orm)
                 return orm, model
+            # Fallback to recent emails if no list was displayed
+            from lib.db import get_recent_emails
+            recent = get_recent_emails(limit=50)
+            if 0 <= idx < len(recent):
+                orm = recent[idx]
+                return orm, _orm_to_model(orm)
         except (ValueError, IndexError):
             pass
 
@@ -831,16 +847,18 @@ def _resolve_email_ref(ref: str):
 
 def _resolve_refs_to_ids(refs: list) -> list:
     """Resolve a list of references to email IDs."""
-    from lib.db import get_recent_emails
-
-    recent = get_recent_emails(limit=20)
     ids = []
     for ref in refs:
         if isinstance(ref, str) and ref.startswith("#"):
             try:
                 idx = int(ref[1:]) - 1
-                if 0 <= idx < len(recent):
-                    ids.append(recent[idx].id)
+                if _last_displayed_emails and 0 <= idx < len(_last_displayed_emails):
+                    ids.append(_last_displayed_emails[idx].id)
+                else:
+                    from lib.db import get_recent_emails
+                    recent = get_recent_emails(limit=50)
+                    if 0 <= idx < len(recent):
+                        ids.append(recent[idx].id)
             except ValueError:
                 pass
     return ids
