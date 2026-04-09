@@ -172,7 +172,7 @@ def _onboard_single_account(account) -> dict:
             reply_checks += 1
             if reply_checks % 10 == 0:
                 time.sleep(1)
-            if check_thread_replied(creds, item["thread_id"], account.email_address):
+            if check_thread_replied(creds, item["thread_id"], account.email_address, after_msg_id=item["email_id"]):
                 mark_email_replied(item["email_id"])
             else:
                 needs_reply_count += 1

@@ -251,20 +251,50 @@ def create_gmail_draft(
 # ---------------------------------------------------------------------------
 
 
-def check_thread_replied(creds: Credentials, thread_id: str, account_email: str) -> bool:
-    """Check if the account owner has sent a reply in a Gmail thread."""
+def check_thread_replied(
+    creds: Credentials, thread_id: str, account_email: str, after_msg_id: str = ""
+) -> bool:
+    """Check if the account owner has sent a real reply in a Gmail thread.
+
+    Skips calendar auto-responses and messages sent before the email in question.
+    """
     service = _build_service(creds)
     try:
         thread = service.users().threads().get(
             userId="me", id=thread_id, format="metadata",
-            metadataHeaders=["From"],
+            metadataHeaders=["From", "Subject", "Content-Type"],
         ).execute()
+
         account_lower = account_email.lower()
-        for msg in thread.get("messages", [])[1:]:  # skip first message (the original)
+        messages = thread.get("messages", [])
+
+        # Find the index of the email we're checking (if after_msg_id provided)
+        start_idx = 1  # default: skip first message
+        if after_msg_id:
+            for i, msg in enumerate(messages):
+                if msg["id"] == after_msg_id:
+                    start_idx = i + 1
+                    break
+
+        for msg in messages[start_idx:]:
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
             from_addr = headers.get("From", "").lower()
-            if account_lower in from_addr:
-                return True
+
+            if account_lower not in from_addr:
+                continue
+
+            # Skip calendar auto-responses
+            subject = headers.get("Subject", "").lower()
+            if any(kw in subject for kw in ["accepted", "declined", "tentative"]):
+                continue
+
+            content_type = headers.get("Content-Type", "").lower()
+            if "text/calendar" in content_type:
+                continue
+
+            # This is a real reply from the owner
+            return True
+
         return False
     except HttpError:
         return False

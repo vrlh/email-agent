@@ -291,7 +291,7 @@ def _sync_reply_status(account, creds) -> int:
     synced = 0
     for item in unreplied:
         try:
-            if check_thread_replied(creds, item["thread_id"], account.email_address):
+            if check_thread_replied(creds, item["thread_id"], account.email_address, after_msg_id=item["email_id"]):
                 mark_email_replied(item["email_id"])
                 synced += 1
         except Exception:
