@@ -488,8 +488,8 @@ def _cmd_status(params: dict):
 def _cmd_help(params: dict):
     import os
     setup_secret = os.environ.get("SETUP_SECRET", "")
-    host = os.environ.get("VERCEL_URL", "email-agent-fawn.vercel.app")
-    add_url = f"https://{host}/api/auth/gmail_start?secret={setup_secret}"
+    app_url = os.environ.get("APP_URL", "https://email-agent-fawn.vercel.app").rstrip("/")
+    add_url = f"{app_url}/api/auth/gmail_start?secret={setup_secret}"
 
     _reply(
         "*Available commands:*\n"

@@ -65,9 +65,12 @@ class handler(BaseHTTPRequestHandler):
 
     def _exchange_code(self, code: str) -> dict:
         """Exchange authorization code for access + refresh tokens."""
-        host = self.headers.get("x-forwarded-host") or self.headers.get("host", "")
-        proto = self.headers.get("x-forwarded-proto", "https")
-        redirect_uri = f"{proto}://{host}/api/auth/gmail_callback"
+        app_url = os.environ.get("APP_URL", "").rstrip("/")
+        if not app_url:
+            host = self.headers.get("x-forwarded-host") or self.headers.get("host", "")
+            proto = self.headers.get("x-forwarded-proto", "https")
+            app_url = f"{proto}://{host}"
+        redirect_uri = f"{app_url}/api/auth/gmail_callback"
 
         resp = httpx.post(
             "https://oauth2.googleapis.com/token",

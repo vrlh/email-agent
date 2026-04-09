@@ -27,10 +27,13 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(b"Forbidden")
             return
 
-        # Build the redirect URI from the current host
-        host = self.headers.get("x-forwarded-host") or self.headers.get("host", "")
-        proto = self.headers.get("x-forwarded-proto", "https")
-        redirect_uri = f"{proto}://{host}/api/auth/gmail_callback"
+        # Build the redirect URI from APP_URL env var (must match Google Console)
+        app_url = os.environ.get("APP_URL", "").rstrip("/")
+        if not app_url:
+            host = self.headers.get("x-forwarded-host") or self.headers.get("host", "")
+            proto = self.headers.get("x-forwarded-proto", "https")
+            app_url = f"{proto}://{host}"
+        redirect_uri = f"{app_url}/api/auth/gmail_callback"
 
         params = urlencode({
             "client_id": os.environ["GOOGLE_CLIENT_ID"],
