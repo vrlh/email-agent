@@ -253,6 +253,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         "list_rules": _tool_list_rules,
         "get_status": _tool_status,
         "onboard": _tool_onboard,
+        "check_reply_status": _tool_check_reply_status,
     }
     executor = executors.get(tool_name)
     if not executor:
@@ -554,6 +555,36 @@ def _tool_onboard(params: dict) -> str:
     from lib.onboard import run_onboard
     result = run_onboard(force=force)
     return f"Onboard complete. {result.get('total_needs_reply', 0)} email(s) need reply."
+
+
+def _tool_check_reply_status(params: dict) -> str:
+    """Check Gmail thread to see if an email has been replied to, and update DB."""
+    from lib.db import get_active_accounts, mark_email_replied
+    from lib.gmail import check_thread_replied, credentials_from_encrypted, refresh_if_needed
+
+    email_orm, model_email = _resolve_email_ref(params.get("ref", "#1"))
+    if not email_orm:
+        return "Couldn't find that email."
+
+    if not email_orm.thread_id:
+        return f"Email '{email_orm.subject}' has no thread ID — can't check replies."
+
+    accounts = {a.id: a for a in get_active_accounts()}
+    acct = accounts.get(email_orm.account_id)
+    if not acct:
+        return "Account not found."
+
+    creds = credentials_from_encrypted(acct.encrypted_tokens)
+    creds, _ = refresh_if_needed(creds)
+
+    replied = check_thread_replied(creds, email_orm.thread_id, acct.email_address, after_msg_id=email_orm.id)
+
+    if replied:
+        mark_email_replied(email_orm.id)
+        _reply(f"\u2705 '{email_orm.subject}' — you already replied. Cleared from needs-reply.")
+        return f"Email '{email_orm.subject}' has been replied to. Marked as replied in DB."
+    else:
+        return f"Email '{email_orm.subject}' — no reply found in the Gmail thread."
 
 
 # ======================================================================

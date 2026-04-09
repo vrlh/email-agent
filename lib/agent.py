@@ -177,6 +177,20 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "check_reply_status",
+        "description": "Check if a specific email has been replied to in Gmail by looking at the full thread. Use this when the user says they already replied to something.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Email reference like '#1'",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
         "name": "onboard",
         "description": "Scan and triage emails from the last 3 months. Use force=true to re-triage all emails.",
         "input_schema": {
