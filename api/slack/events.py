@@ -170,6 +170,7 @@ _KEYWORD_INTENTS = {
     "onboard": "onboard",
     "scan my emails": "onboard",
     "scan emails": "onboard",
+    "debug triage": "debug_triage",
 }
 
 
@@ -227,6 +228,7 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         "delete_rule": _cmd_delete_rule,
         "needs_reply": _cmd_needs_reply,
         "onboard": _cmd_onboard,
+        "debug_triage": _cmd_debug_triage,
     }
 
     handler_fn = routes.get(intent)
@@ -618,6 +620,79 @@ def _cmd_onboard(params: dict):
     _reply("\U0001f4e5 Starting email onboard (scanning last 3 months). This may take a minute...")
     from lib.onboard import run_onboard
     run_onboard()
+
+
+def _cmd_debug_triage(params: dict):
+    """Debug: triage 5 recent primary emails and show raw LLM output."""
+    import json
+    from lib.db import get_active_accounts, get_untriaged_emails, reset_needs_reply
+    from lib.models import Email, EmailAddress, EmailCategory
+    from lib.providers._prompts import TRIAGE_SYSTEM, build_triage_user_prompt
+
+    accounts = get_active_accounts()
+    if not accounts:
+        _reply("No accounts")
+        return
+
+    acct = accounts[0]
+    reset_needs_reply(acct.id)
+
+    from lib.db import get_session
+    from lib.db_models import EmailORM
+    from sqlalchemy import select
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.account_id == acct.id)
+            .where(EmailORM.category == "primary")
+            .order_by(EmailORM.date.desc())
+            .limit(5)
+        )
+        rows = list(session.execute(stmt).scalars().all())
+        for r in rows:
+            session.expunge(r)
+
+    if not rows:
+        _reply("No primary emails found")
+        return
+
+    # Build model emails
+    model_emails = []
+    for u in rows:
+        model_emails.append(Email(
+            id=u.id, account_id=u.account_id, message_id=u.message_id or u.id,
+            subject=u.subject, sender=EmailAddress(email=u.sender_email, name=u.sender_name),
+            body_text=u.body_text, date=u.date, is_read=u.is_read,
+            category=EmailCategory(u.category) if u.category else EmailCategory.PRIMARY,
+        ))
+
+    # Show what we're sending to the LLM
+    prompt = build_triage_user_prompt(model_emails)
+    _reply(f"*Sending to LLM ({len(model_emails)} emails):*\n```\n{prompt[:2000]}\n```")
+
+    # Call LLM and show raw response
+    try:
+        from lib.providers._prompts import strip_fences
+        if os.environ.get("LLM_PROVIDER", "gemini") == "gemini":
+            from lib.providers.gemini import _chat
+        else:
+            from lib.providers.claude import _chat
+        raw = _chat(TRIAGE_SYSTEM, prompt)
+        _reply(f"*Raw LLM response:*\n```\n{raw[:2000]}\n```")
+
+        # Parse and show needs_reply values
+        parsed = json.loads(strip_fences(raw))
+        nr_summary = []
+        for i, item in enumerate(parsed):
+            nr = item.get("needs_reply", "MISSING")
+            subj = model_emails[i].subject if i < len(model_emails) else "?"
+            nr_summary.append(f"{'YES' if nr else 'no'} | {subj}")
+        _reply("*needs_reply results:*\n" + "\n".join(nr_summary))
+    except Exception as exc:
+        _reply(f"*LLM error:* {exc}")
+
+
+import os
 
 
 # ======================================================================
