@@ -161,6 +161,8 @@ _KEYWORD_INTENTS = {
     "list": "list",
     "list unread": "list",
     "list all": "list",
+    "dismiss": "archive",
+    "mark as read": "archive",
     "rules": "list_rules",
     "list rules": "list_rules",
     "needs reply": "needs_reply",
@@ -384,8 +386,9 @@ def _cmd_reply(params: dict):
 
 
 def _cmd_archive(params: dict):
-    from lib.db import get_active_accounts, get_email_by_id
-    from lib.gmail import archive_email, credentials_from_encrypted, refresh_if_needed
+    """Mark emails as read in Gmail + dismiss from needs_reply in DB."""
+    from lib.db import get_active_accounts, get_email_by_id, mark_email_replied
+    from lib.gmail import mark_read, credentials_from_encrypted, refresh_if_needed
 
     refs = params.get("refs", [])
     if isinstance(refs, str):
@@ -401,7 +404,7 @@ def _cmd_archive(params: dict):
         return
 
     accounts = {a.id: a for a in get_active_accounts()}
-    archived = 0
+    dismissed = 0
     for eid in email_ids:
         email_orm = get_email_by_id(eid)
         if not email_orm:
@@ -411,10 +414,11 @@ def _cmd_archive(params: dict):
             continue
         creds = credentials_from_encrypted(acct.encrypted_tokens)
         creds, _ = refresh_if_needed(creds)
-        if archive_email(creds, eid):
-            archived += 1
+        mark_read(creds, eid)
+        mark_email_replied(eid)  # clears needs_reply
+        dismissed += 1
 
-    _reply(f"\U0001f5c4\ufe0f Archived {archived} email(s).")
+    _reply(f"\u2705 Dismissed {dismissed} email(s) — marked as read.")
 
 
 def _cmd_send(params: dict):
