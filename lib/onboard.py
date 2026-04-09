@@ -46,6 +46,7 @@ def run_onboard(
         results.append(result)
 
     total_new = sum(r.get("new", 0) for r in results)
+    total_reset = sum(r.get("reset", 0) for r in results)
     total_backfilled = sum(r.get("backfilled", 0) for r in results)
     total_ai_flagged = sum(r.get("ai_flagged_needs_reply", 0) for r in results)
     total_gmail_replied = sum(r.get("gmail_marked_replied", 0) for r in results)
@@ -55,7 +56,7 @@ def run_onboard(
         from lib.slack_client import send_dm
         send_dm(
             f"\U0001f4e5 *Onboarding complete*\n"
-            f"New: {total_new} | Triaged: {total_backfilled}\n"
+            f"New: {total_new} | Reset: {total_reset} | Triaged: {total_backfilled}\n"
             f"AI flagged needs reply: {total_ai_flagged}\n"
             f"Already replied (Gmail): {total_gmail_replied}\n"
             f"*{total_needs_reply} email(s) still need your reply.*\n"
@@ -147,11 +148,14 @@ def _onboard_single_account(account, force: bool = False) -> dict:
 
         # Backfill needs_reply for untriaged emails
         from lib.db import bulk_update_needs_reply, get_untriaged_emails
+        reset_count = 0
         if force:
             from lib.db import reset_needs_reply
-            reset_needs_reply(account.id)
+            reset_count = reset_needs_reply(account.id)
+            logger.info(f"Force reset {reset_count} emails for {account.email_address}")
 
         untriaged = get_untriaged_emails(account.id, limit=500)
+        logger.info(f"Found {len(untriaged)} untriaged emails for {account.email_address}")
         flagged_by_ai = 0
         if untriaged:
             from lib.models import Email, EmailAddress
@@ -196,6 +200,7 @@ def _onboard_single_account(account, force: bool = False) -> dict:
             "account": account.email_address,
             "fetched": len(emails),
             "new": len(new_ids),
+            "reset": reset_count,
             "backfilled": len(untriaged),
             "ai_flagged_needs_reply": flagged_by_ai,
             "gmail_marked_replied": marked_replied,
