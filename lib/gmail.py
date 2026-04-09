@@ -104,8 +104,8 @@ def _fetch_via_history(
             .execute()
         )
     except HttpError as exc:
-        if exc.resp.status == 404:
-            # History ID expired — fall back to a full recent fetch
+        if exc.resp.status in (404, 500):
+            # History ID expired or backend error — fall back to recent fetch
             return _fetch_recent(service, account_id, max_results)
         raise
 

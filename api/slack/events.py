@@ -152,31 +152,6 @@ def _send_error(detail: str, channel: str = "", thread_ts: str = ""):
     send_dm(f"\u26a0\ufe0f Something went wrong: {detail}", channel=channel, thread_ts=thread_ts)
 
 
-# Simple keyword matching as fallback when LLM is unavailable
-_KEYWORD_INTENTS = {
-    "status": "status",
-    "help": "help",
-    "send": "send",
-    "cancel": "cancel",
-    "list": "list",
-    "list unread": "list",
-    "list all": "list",
-    "dismiss": "archive",
-    "mark as read": "archive",
-    "rules": "list_rules",
-    "list rules": "list_rules",
-    "needs reply": "needs_reply",
-    "list needs reply": "needs_reply",
-    "what needs a reply": "needs_reply",
-    "unreplied": "needs_reply",
-    "onboard": "onboard",
-    "onboard force": "onboard_force",
-    "scan my emails": "onboard",
-    "scan emails": "onboard",
-    "debug triage": "debug_triage",
-}
-
-
 _reply_channel: str = ""
 _reply_thread_ts: str = ""
 _last_displayed_emails: list = []  # stores EmailORM objects from last list/needs-reply
@@ -189,65 +164,26 @@ def _reply(text: str, blocks=None) -> str:
 
 
 def _process_command(text: str, channel: str = "", thread_ts: str = ""):
-    """Parse intent and route to the appropriate handler."""
+    """Run the tool-calling agent to handle the user's message."""
     global _reply_channel, _reply_thread_ts
     _reply_channel = channel
     _reply_thread_ts = thread_ts
 
-    # Try simple keyword match first (free, instant, no LLM needed)
+    # Quick keyword shortcuts (no LLM cost)
     text_lower = text.strip().lower()
-    intent = _KEYWORD_INTENTS.get(text_lower)
+    if text_lower == "help":
+        _cmd_help({})
+        return
 
-    if not intent:
-        # Fall back to LLM parsing for complex commands
-        try:
-            from lib.llm import parse_command
-            context = _build_context()
-            cmd = parse_command(text, context)
-            intent = cmd.intent
-            params = cmd.params
-        except Exception as exc:
-            logger.error(f"LLM parse failed: {exc}")
-            _reply(
-                f"\u26a0\ufe0f LLM parsing failed: {exc}\n\n"
-                "Simple commands still work: status, list, help, send, cancel"
-            )
-            return
-    else:
-        params = {}
-
-    routes = {
-        "list": _cmd_list,
-        "summarize": _cmd_summarize,
-        "reply": _cmd_reply,
-        "archive": _cmd_archive,
-        "send": _cmd_send,
-        "cancel": _cmd_cancel,
-        "edit": _cmd_edit,
-        "status": _cmd_status,
-        "help": _cmd_help,
-        "ignore": _cmd_ignore,
-        "priority_sender": _cmd_priority_sender,
-        "list_rules": _cmd_list_rules,
-        "delete_rule": _cmd_delete_rule,
-        "needs_reply": _cmd_needs_reply,
-        "onboard": _cmd_onboard,
-        "onboard_force": _cmd_onboard_force,
-        "debug_triage": _cmd_debug_triage,
-    }
-
-    handler_fn = routes.get(intent)
-    if handler_fn:
-        handler_fn(params)
-    else:
-        _reply(
-            "I didn't understand that. Try:\n"
-            "\u2022 \"list unread\"\n"
-            "\u2022 \"summarize #3\"\n"
-            "\u2022 \"reply to #1 saying ...\"\n"
-            "\u2022 \"archive #2\"\n"
-            "\u2022 \"status\""
-        )
+    try:
+        from lib.agent import run_agent
+        context = _build_context()
+        response = run_agent(text, context, _execute_tool)
+        if response:
+            _reply(response)
+    except Exception as exc:
+        logger.error(f"Agent failed: {exc}")
+        _reply(f"\u26a0\ufe0f Agent error: {exc}")
 
 
 
@@ -269,8 +205,328 @@ def _build_context() -> str:
     return "\n".join(lines) if lines else ""
 
 
+def _execute_tool(tool_name: str, tool_input: dict) -> str:
+    """Execute a tool call from the agent. Returns result as a string."""
+    executors = {
+        "list_emails": _tool_list_emails,
+        "get_needs_reply": _tool_needs_reply,
+        "summarize_email": _tool_summarize,
+        "reply_to_email": _tool_reply,
+        "dismiss_emails": _tool_dismiss,
+        "send_draft": _tool_send,
+        "cancel_draft": _tool_cancel,
+        "edit_draft": _tool_edit,
+        "create_rule": _tool_create_rule,
+        "delete_rule": _tool_delete_rule,
+        "list_rules": _tool_list_rules,
+        "get_status": _tool_status,
+        "onboard": _tool_onboard,
+    }
+    executor = executors.get(tool_name)
+    if not executor:
+        return f"Unknown tool: {tool_name}"
+    return executor(tool_input)
+
+
 # ======================================================================
-# Command handlers
+# Tool executors (called by agent, return strings)
+# ======================================================================
+
+
+def _tool_list_emails(params: dict) -> str:
+    from lib.db import get_active_accounts, get_attention_emails, get_emails_for_account
+
+    accounts = get_active_accounts()
+    if not accounts:
+        return "No Gmail accounts connected."
+
+    filter_type = params.get("filter", "attention")
+    show_all = filter_type == "all"
+    unread_only = filter_type == "unread"
+
+    all_emails = []
+    account_map = {}
+    for acct in accounts:
+        account_map[acct.id] = acct.email_address
+        if show_all:
+            emails = get_emails_for_account(acct.id, limit=50)
+        else:
+            emails = get_attention_emails(acct.id, unread_only=unread_only, limit=50)
+        all_emails.extend(emails)
+
+    all_emails.sort(key=lambda e: e.date, reverse=True)
+    all_emails = all_emails[:50]
+
+    global _last_displayed_emails
+    _last_displayed_emails = all_emails
+
+    if not all_emails:
+        return "No emails found."
+
+    # Build display and send via Slack blocks
+    from lib.models import Email, EmailAddress, EmailCategory, EmailPriority
+    from lib.slack_client import build_email_list_blocks
+
+    model_emails = []
+    for e in all_emails:
+        model_emails.append(Email(
+            id=e.id, account_id=e.account_id, message_id=e.message_id or e.id,
+            subject=e.subject, sender=EmailAddress(email=e.sender_email, name=e.sender_name),
+            date=e.date, is_read=e.is_read,
+            category=EmailCategory(e.category) if e.category else EmailCategory.PRIMARY,
+            priority=EmailPriority(e.priority) if e.priority else EmailPriority.NORMAL,
+        ))
+
+    blocks = build_email_list_blocks(model_emails, account_map)
+    _reply(f"{len(model_emails)} email(s)", blocks=blocks)
+    return f"Displayed {len(model_emails)} emails."
+
+
+def _tool_needs_reply(params: dict) -> str:
+    from lib.db import get_needs_reply_emails, get_active_accounts
+    from datetime import datetime, timezone
+
+    emails = get_needs_reply_emails()
+    if not emails:
+        return "No emails need a reply right now."
+
+    global _last_displayed_emails
+    _last_displayed_emails = emails
+
+    accounts = {a.id: a.email_address for a in get_active_accounts()}
+    lines = []
+    for i, e in enumerate(emails, 1):
+        acct = accounts.get(e.account_id, "")
+        acct_tag = f" ({acct})" if acct else ""
+        age = ""
+        if e.date:
+            hours = (datetime.now(timezone.utc) - e.date.replace(
+                tzinfo=timezone.utc if e.date.tzinfo is None else e.date.tzinfo
+            )).total_seconds() / 3600
+            if hours < 24:
+                age = f" ({int(hours)}h ago)"
+            else:
+                age = f" ({int(hours / 24)}d ago)"
+        lines.append(f"#{i} {e.subject} — {e.sender_email}{acct_tag}{age}")
+
+    result = f"{len(emails)} email(s) need your reply:\n" + "\n".join(lines)
+    _reply(f"\u23f3 *{len(emails)} email(s) need your reply:*\n\n" + "\n".join(
+        f"\u2022 *#{i+1}* {lines[i].split(' ', 1)[1]}" for i in range(len(lines))
+    ))
+    return result
+
+
+def _tool_summarize(params: dict) -> str:
+    from lib.llm import summarize_email
+    from lib.slack_client import build_summary_blocks
+
+    email_orm, model_email = _resolve_email_ref(params.get("ref", "#1"))
+    if not email_orm:
+        return "Couldn't find that email."
+
+    summary = summarize_email(model_email)
+    blocks = build_summary_blocks(model_email, summary)
+    _reply(f"Summary: {model_email.subject}", blocks=blocks)
+    return f"Summary of '{model_email.subject}': {summary}"
+
+
+def _tool_reply(params: dict) -> str:
+    from lib.llm import generate_draft
+    from lib.db import create_pending_draft, get_active_accounts, update_draft_slack_ts
+    from lib.slack_client import build_draft_review_blocks
+
+    email_orm, model_email = _resolve_email_ref(params.get("ref", "#1"))
+    if not email_orm:
+        return "Couldn't find that email."
+
+    message = params.get("message", "")
+    if not message:
+        return "No reply message provided."
+
+    accounts = get_active_accounts()
+    account_email = ""
+    for a in accounts:
+        if a.id == email_orm.account_id:
+            account_email = a.email_address
+            break
+
+    draft_content = generate_draft(model_email, message, account_email)
+    to_list = [{"email": addr.email, "name": addr.name} for addr in draft_content.to_addresses]
+    draft = create_pending_draft(
+        account_id=email_orm.account_id, to_addresses=to_list,
+        subject=draft_content.subject, body_text=draft_content.body_text,
+        reply_to_email_id=email_orm.id, thread_id=email_orm.thread_id,
+    )
+
+    blocks = build_draft_review_blocks(
+        draft_id=draft.id, account_email=account_email,
+        to=str(model_email.sender), subject=draft_content.subject,
+        body=draft_content.body_text,
+    )
+    ts = _reply(f"Draft reply to {model_email.sender.email}", blocks=blocks)
+    update_draft_slack_ts(draft.id, ts)
+    return f"Draft created for reply to {model_email.sender.email}. Showing Send/Cancel buttons."
+
+
+def _tool_dismiss(params: dict) -> str:
+    from lib.db import get_active_accounts, get_email_by_id, mark_email_replied
+    from lib.gmail import mark_read, credentials_from_encrypted, refresh_if_needed
+
+    refs = params.get("refs", [])
+    if not refs:
+        return "No email references provided."
+
+    email_ids = _resolve_refs_to_ids(refs)
+    if not email_ids:
+        return "Couldn't find those emails."
+
+    accounts = {a.id: a for a in get_active_accounts()}
+    dismissed = 0
+    for eid in email_ids:
+        email_orm = get_email_by_id(eid)
+        if not email_orm:
+            continue
+        acct = accounts.get(email_orm.account_id)
+        if not acct:
+            continue
+        creds = credentials_from_encrypted(acct.encrypted_tokens)
+        creds, _ = refresh_if_needed(creds)
+        mark_read(creds, eid)
+        mark_email_replied(eid)
+        dismissed += 1
+
+    _reply(f"\u2705 Dismissed {dismissed} email(s) — marked as read.")
+    return f"Dismissed {dismissed} email(s)."
+
+
+def _tool_send(params: dict) -> str:
+    from lib.db import get_pending_draft
+    draft = get_pending_draft()
+    if not draft:
+        return "No pending draft to send."
+    _handle_send(draft.id)
+    return "Draft sent."
+
+
+def _tool_cancel(params: dict) -> str:
+    from lib.db import get_pending_draft
+    draft = get_pending_draft()
+    if not draft:
+        return "No pending draft to cancel."
+    _handle_cancel(draft.id)
+    return "Draft cancelled."
+
+
+def _tool_edit(params: dict) -> str:
+    from lib.llm import edit_draft as llm_edit
+    from lib.db import get_pending_draft, update_draft_body, get_active_accounts
+    from lib.slack_client import build_draft_review_blocks
+
+    draft = get_pending_draft()
+    if not draft:
+        return "No pending draft to edit."
+
+    instruction = params.get("instruction", "")
+    if not instruction:
+        return "No edit instruction provided."
+
+    new_body = llm_edit(draft.body_text, instruction)
+    update_draft_body(draft.id, new_body)
+
+    accounts = {a.id: a for a in get_active_accounts()}
+    acct = accounts.get(draft.account_id)
+    account_email = acct.email_address if acct else ""
+    to_display = draft.to_addresses[0].get("email", "") if draft.to_addresses else ""
+
+    blocks = build_draft_review_blocks(
+        draft_id=draft.id, account_email=account_email,
+        to=to_display, subject=draft.subject, body=new_body,
+    )
+    _reply("Updated draft", blocks=blocks)
+    return "Draft updated."
+
+
+def _tool_create_rule(params: dict) -> str:
+    from lib.db import create_user_rule
+
+    rule_type = params.get("rule_type", "ignore")
+    field = params.get("field", "sender_domain")
+    operator = params.get("operator", "contains")
+    value = params.get("value", "")
+
+    if not value:
+        return "No value provided for the rule."
+
+    create_user_rule(rule_type=rule_type, field=field, operator=operator, value=value,
+                     action="auto_archive" if rule_type == "ignore" else "boost")
+
+    emoji = "\U0001f6ab" if rule_type == "ignore" else "\u2b50"
+    _reply(f"{emoji} Rule created: {rule_type} emails where {field} {operator} `{value}`")
+    return f"Rule created: {rule_type} {field} {operator} {value}"
+
+
+def _tool_delete_rule(params: dict) -> str:
+    from lib.db import get_user_rules, delete_user_rule
+
+    ref = params.get("ref", "")
+    if not ref:
+        return "No rule reference provided."
+
+    try:
+        idx = int(ref.replace("#", "")) - 1
+        rules = get_user_rules()
+        if 0 <= idx < len(rules):
+            rule = rules[idx]
+            delete_user_rule(rule.id)
+            _reply(f"\U0001f5d1\ufe0f Deleted rule: {rule.rule_type} {rule.field} {rule.operator} `{rule.value}`")
+            return f"Deleted rule: {rule.rule_type} {rule.field} {rule.operator} {rule.value}"
+        return f"Rule #{idx + 1} not found."
+    except ValueError:
+        return "Invalid rule reference."
+
+
+def _tool_list_rules(params: dict) -> str:
+    from lib.db import get_user_rules
+    from lib.slack_client import build_rules_list_blocks
+
+    rules = get_user_rules()
+    blocks = build_rules_list_blocks(rules)
+    _reply("Your rules", blocks=blocks)
+    return f"{len(rules)} rule(s) configured."
+
+
+def _tool_status(params: dict) -> str:
+    from lib.db import get_active_accounts, get_pending_draft
+    from lib.slack_client import build_status_blocks
+
+    accounts = get_active_accounts()
+    acct_data = []
+    for a in accounts:
+        acct_data.append({
+            "email": a.email_address,
+            "last_sync": a.last_sync_at.strftime("%b %d, %H:%M") if a.last_sync_at else "never",
+        })
+
+    draft = get_pending_draft()
+    blocks = build_status_blocks(acct_data, pending_draft=draft is not None)
+    _reply("Status", blocks=blocks)
+    return f"{len(accounts)} account(s) connected."
+
+
+def _tool_onboard(params: dict) -> str:
+    force = params.get("force", False)
+    if force:
+        _reply("\U0001f4e5 Force onboarding (re-triaging ALL emails)...")
+    else:
+        _reply("\U0001f4e5 Onboarding (triaging new/untriaged emails)...")
+    from lib.onboard import run_onboard
+    result = run_onboard(force=force)
+    return f"Onboard complete. {result.get('total_needs_reply', 0)} email(s) need reply."
+
+
+# ======================================================================
+# Legacy command handlers (kept for help and interactive buttons)
+# ======================================================================
 # ======================================================================
 
 
