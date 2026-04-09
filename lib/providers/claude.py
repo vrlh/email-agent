@@ -31,7 +31,7 @@ from lib.providers._prompts import (
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-haiku-4-5-20251001"
 
 
 def _get_client() -> anthropic.Anthropic:
