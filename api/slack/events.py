@@ -168,6 +168,7 @@ _KEYWORD_INTENTS = {
     "what needs a reply": "needs_reply",
     "unreplied": "needs_reply",
     "onboard": "onboard",
+    "onboard force": "onboard_force",
     "scan my emails": "onboard",
     "scan emails": "onboard",
     "debug triage": "debug_triage",
@@ -228,6 +229,7 @@ def _process_command(text: str, channel: str = "", thread_ts: str = ""):
         "delete_rule": _cmd_delete_rule,
         "needs_reply": _cmd_needs_reply,
         "onboard": _cmd_onboard,
+        "onboard_force": _cmd_onboard_force,
         "debug_triage": _cmd_debug_triage,
     }
 
@@ -617,9 +619,15 @@ def _cmd_needs_reply(params: dict):
 
 
 def _cmd_onboard(params: dict):
-    _reply("\U0001f4e5 Starting email onboard (scanning last 3 months). This may take a minute...")
+    _reply("\U0001f4e5 Onboarding (triaging new/untriaged emails)...")
     from lib.onboard import run_onboard
     run_onboard()
+
+
+def _cmd_onboard_force(params: dict):
+    _reply("\U0001f4e5 Force onboarding (re-triaging ALL emails). This may take a few minutes...")
+    from lib.onboard import run_onboard
+    run_onboard(force=True)
 
 
 def _cmd_debug_triage(params: dict):

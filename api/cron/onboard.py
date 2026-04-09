@@ -22,10 +22,11 @@ class handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(urlparse(self.path).query)
         account_id = qs.get("account_id", [None])[0]
+        force = qs.get("force", ["false"])[0].lower() == "true"
 
         try:
             from lib.onboard import run_onboard
-            stats = run_onboard(account_id=account_id)
+            stats = run_onboard(account_id=account_id, force=force)
             self._respond(200, stats)
         except Exception as exc:
             logger.error(f"Onboard failed: {exc}")

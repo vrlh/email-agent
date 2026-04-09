@@ -4,17 +4,21 @@ Called from: /api/cron/onboard (HTTP), Slack "onboard" command, OAuth callback.
 """
 
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> dict:
+def run_onboard(
+    account_id: Optional[str] = None,
+    force: bool = False,
+    notify_slack: bool = True,
+) -> dict:
     """Onboard all active accounts, or a single account if account_id is given.
 
-    Returns stats dict. Sends Slack summary if notify_slack is True.
+    If *force* is True, resets and re-triages ALL primary emails (slower).
+    Otherwise, only triages emails that haven't been triaged yet (fast).
     """
     from lib.db import create_tables, get_active_accounts
     from lib.db_models import GmailAccountORM
@@ -38,7 +42,7 @@ def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> 
 
     results = []
     for account in accounts:
-        result = _onboard_single_account(account)
+        result = _onboard_single_account(account, force=force)
         results.append(result)
 
     total_new = sum(r.get("new", 0) for r in results)
@@ -51,9 +55,9 @@ def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> 
         from lib.slack_client import send_dm
         send_dm(
             f"\U0001f4e5 *Onboarding complete*\n"
-            f"New: {total_new} | Re-triaged: {total_backfilled}\n"
+            f"New: {total_new} | Triaged: {total_backfilled}\n"
             f"AI flagged needs reply: {total_ai_flagged}\n"
-            f"Already replied (Gmail check): {total_gmail_replied}\n"
+            f"Already replied (Gmail): {total_gmail_replied}\n"
             f"*{total_needs_reply} email(s) still need your reply.*\n"
             f"Type \"needs reply\" to see them."
         )
@@ -67,7 +71,7 @@ def run_onboard(account_id: Optional[str] = None, notify_slack: bool = True) -> 
     }
 
 
-def _onboard_single_account(account) -> dict:
+def _onboard_single_account(account, force: bool = False) -> dict:
     from lib.db import (
         mark_email_replied,
         update_account_sync,
@@ -104,13 +108,13 @@ def _onboard_single_account(account) -> dict:
         engine.load_rules(BuiltinRules.get_all_rules())
         emails = engine.process_emails(emails)
 
-        # AI triage for PRIMARY emails
+        # AI triage for PRIMARY emails (used for new inserts)
         primary = [e for e in emails if e.category == EmailCategory.PRIMARY]
         triage_map = {}
         if primary:
             triage_map = _triage_batch(primary)
 
-        # Build ORM objects
+        # Build ORM objects and insert new emails
         orm_objects = []
         for e in emails:
             triage = triage_map.get(e.id)
@@ -141,12 +145,15 @@ def _onboard_single_account(account) -> dict:
 
         new_ids = upsert_emails(orm_objects)
 
-        # Reset and re-triage needs_reply for all primary emails
-        from lib.db import bulk_update_needs_reply, get_untriaged_emails, reset_needs_reply
-        reset_needs_reply(account.id)
-        untriaged = get_untriaged_emails(account.id, limit=200)
+        # Backfill needs_reply for untriaged emails
+        from lib.db import bulk_update_needs_reply, get_untriaged_emails
+        if force:
+            from lib.db import reset_needs_reply
+            reset_needs_reply(account.id)
+
+        untriaged = get_untriaged_emails(account.id, limit=500)
+        flagged_by_ai = 0
         if untriaged:
-            # Convert ORM to model for LLM triage
             from lib.models import Email, EmailAddress
             model_emails = []
             for u in untriaged:
@@ -157,7 +164,6 @@ def _onboard_single_account(account) -> dict:
                     category=EmailCategory(u.category) if u.category else EmailCategory.PRIMARY,
                 ))
             backfill_triage = _triage_batch(model_emails)
-            flagged_by_ai = 0
             updates = []
             for u in untriaged:
                 t = backfill_triage.get(u.id)
@@ -170,19 +176,13 @@ def _onboard_single_account(account) -> dict:
                     "summary": t.summary if t else None,
                 })
             bulk_update_needs_reply(updates)
-        else:
-            flagged_by_ai = 0
 
-        # Check reply status for all needs_reply emails (new + backfilled)
+        # Check reply status for all needs_reply emails
         from lib.db import get_unreplied_thread_ids
         unreplied = get_unreplied_thread_ids(account.id)
         needs_reply_count = 0
-        reply_checks = 0
         marked_replied = 0
         for item in unreplied:
-            reply_checks += 1
-            if reply_checks % 10 == 0:
-                time.sleep(1)
             if check_thread_replied(creds, item["thread_id"], account.email_address, after_msg_id=item["email_id"]):
                 mark_email_replied(item["email_id"])
                 marked_replied += 1
@@ -208,7 +208,7 @@ def _onboard_single_account(account) -> dict:
 
 
 def _triage_batch(emails, chunk_size: int = 8) -> dict:
-    """Triage emails in small chunks to avoid LLM output truncation."""
+    """Triage emails in chunks to avoid LLM output truncation."""
     all_results = {}
     for i in range(0, len(emails), chunk_size):
         chunk = emails[i:i + chunk_size]

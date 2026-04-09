@@ -144,7 +144,7 @@ def _fetch_messages_by_ids(
 ) -> List[Email]:
     import time
     emails: List[Email] = []
-    for i, mid in enumerate(message_ids):
+    for mid in message_ids:
         try:
             raw = (
                 service.users()
@@ -158,9 +158,6 @@ def _fetch_messages_by_ids(
                 time.sleep(2)  # Back off on rate limit
                 continue
             continue
-        # Throttle: ~20 requests/sec to stay under 250 quota units/sec
-        if i % 20 == 19:
-            time.sleep(1)
     return emails
 
 
