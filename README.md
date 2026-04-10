@@ -1,372 +1,200 @@
-# Email Agent 🤖📧
+# Email Agent
 
-A comprehensive CLI Email Agent with AI-powered multi-agent orchestration for intelligent email management, triage, and automation.
+AI email assistant that manages multiple Gmail inboxes through Slack. Talk to it naturally — it triages, summarizes, drafts replies, and learns what to ignore.
 
-## 🚀 Features
+## What It Does
 
-### 🧠 AI-Powered Multi-Agent System
-- **Crew-AI Orchestration**: Multi-agent system with specialized roles
-- **Smart Categorization**: Automatic email categorization using ML
-- **Intelligent Prioritization**: AI-driven priority scoring and triage
-- **Action Extraction**: Extracts actionable items, commitments, and deadlines
-- **Thread Summarization**: AI-powered thread analysis with insights
-- **Learning System**: Learns from user feedback to improve decisions
+- **Monitors your inboxes** — connects to multiple Gmail accounts, checks for new emails every 30 minutes
+- **Filters noise automatically** — newsletters, promotions, social media, and spam are silently archived. Only emails that matter reach you
+- **Notifies you in Slack** — one summary message per sync with emails needing your attention, grouped by account
+- **Talks naturally** — no rigid commands. Say "what needs my attention?" or "reply to the Zip interview email saying Tuesday works"
+- **Drafts replies with AI** — describe what you want to say, the bot drafts a professional email, you review and send with one click
+- **Tracks what needs a reply** — flags emails waiting for your response and clears them automatically when you reply in Gmail
+- **Learns your preferences** — tell it "ignore emails from linkedin.com" and it remembers
 
-### 🏢 CEO Intelligence System
-- **Enhanced Labeling**: Advanced spam filtering with sender reputation scoring
-- **Relationship Intelligence**: Strategic contact profiling (board, investors, customers)
-- **Thread Continuity**: Conversation tracking with context-aware labeling
-- **Auto-Escalation**: VIP contact priority handling with smart routing
-- **Strategic Analysis**: Board member and investor communication prioritization
+## How It Works
 
-### 📧 Email Connectors
-- **Gmail Integration**: Full Gmail API support with OAuth2
-- **IMAP Support**: Universal IMAP connector for any email provider
-- **Outlook Support**: Microsoft Graph API integration
+```
+Gmail (multiple accounts)
+  -> Vercel serverless function (every 30 min via external cron)
+  -> Rule-based noise filtering (8 builtin rules)
+  -> Claude Haiku AI triage (scores, summaries, needs-reply detection)
+  -> Neon Postgres (email storage, triage metadata, user rules)
+  -> Slack notification (summary in #email-agent channel)
 
-### 🏷️ Advanced Gmail SDK Features
-- **Smart Labels**: Automatic Gmail label creation and application
-- **Calendar Integration**: Auto-creates calendar events from meeting requests
-- **Smart Replies**: AI-generated reply suggestions
-- **Bulk Operations**: Efficient batch processing of emails
+User types in Slack
+  -> Claude tool-calling agent decides what to do
+  -> Executes tools (list, summarize, reply, dismiss, create rules, etc.)
+  -> Responds conversationally
+```
 
-### 📊 Intelligence & Analytics
-- **Daily Briefs**: AI-generated summaries with actionable insights
-- **Commitment Tracking**: Track commitments, deadlines, and follow-ups
-- **Thread Analysis**: Comprehensive thread summarization with business insights
-- **Performance Metrics**: Email processing statistics and effectiveness scores
+## Features
 
-### 🖥️ Interface Options
-- **Rich CLI**: Feature-rich command-line interface with Typer
-- **Interactive TUI**: Beautiful terminal UI with Textual
-- **Docker Support**: Containerized deployment with persistence
+**Email Management**
+- Multi-account Gmail support (work, personal, school)
+- Incremental sync via Gmail history API
+- Send replies from the correct account with proper threading
+- Archive and mark-as-read via Slack commands
+- Draft verification flow — review before sending
 
-### 🔒 Privacy-First Design
-- **Local Storage**: SQLite database with no cloud dependencies
-- **Secure OAuth**: Industry-standard authentication flows
-- **Credential Protection**: Secure credential management
+**AI Triage**
+- Rule-based noise filtering (social, newsletters, promotions, spam, forums, automated)
+- Claude Haiku scores emails 0-1 on attention needed
+- Flags emails that need your reply (detects questions, requests, scheduling)
+- Checks Gmail threads to see if you already responded
+- User rules override triage (ignore/priority patterns)
 
-## 📦 Installation
+**Slack Interface**
+- Dedicated channel for all bot communication
+- Natural language — just talk to it
+- Threaded replies keep the channel clean
+- Send/Cancel buttons on draft reviews
+- "Add Gmail account" link in help command
+
+**Example Interactions**
+```
+You: what needs my attention?
+Bot: [shows list of important emails]
+
+You: summarize #3
+Bot: [AI summary of that email]
+
+You: reply to the interview email saying Tuesday at 2pm works
+Bot: [shows draft with Send/Cancel buttons]
+
+You: ignore everything from caltvexeccentral
+Bot: Rule created: ignore emails where sender contains caltvexeccentral
+
+You: needs reply
+Bot: [live-checks Gmail, shows only truly unreplied emails]
+```
+
+## Setup
 
 ### Prerequisites
-- Python 3.11+
-- Git
-- Docker (optional)
+- [Vercel](https://vercel.com) account (free tier works)
+- [Slack](https://api.slack.com/apps) app with bot token
+- [Google Cloud](https://console.cloud.google.com) project with Gmail API enabled
+- [Anthropic](https://console.anthropic.com) API key (Claude Haiku, ~$1/month)
 
-### Quick Install
+### 1. Deploy to Vercel
+
 ```bash
-git clone https://github.com/haasonsaas/email-agent.git
+git clone https://github.com/vrlh/email-agent.git
 cd email-agent
-pip install -e .
+npm i -g vercel
+vercel
 ```
 
-### Docker Install
+Add Neon Postgres: Vercel Dashboard -> Storage -> Add -> Neon Postgres
+
+### 2. Set Environment Variables
+
+In Vercel Dashboard -> Settings -> Environment Variables:
+
+| Variable | Value |
+|----------|-------|
+| `LLM_PROVIDER` | `claude` |
+| `ANTHROPIC_API_KEY` | Your Claude API key |
+| `SLACK_BOT_TOKEN` | `xoxb-...` from Slack app |
+| `SLACK_SIGNING_SECRET` | From Slack app Basic Information |
+| `OWNER_SLACK_USER_ID` | Your Slack member ID |
+| `SLACK_CHANNEL_ID` | Channel ID for `#email-agent` |
+| `GOOGLE_CLIENT_ID` | From Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | From Google Cloud Console |
+| `DATABASE_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `CRON_SECRET` | Any random string (`openssl rand -hex 32`) |
+| `SETUP_SECRET` | Any random string |
+| `APP_URL` | Your Vercel production URL (e.g. `https://email-agent-xyz.vercel.app`) |
+
+### 3. Create Slack App
+
+1. [api.slack.com/apps](https://api.slack.com/apps) -> Create New App -> From Scratch
+2. Bot Token Scopes: `chat:write`, `im:history`, `im:read`, `im:write`, `channels:history`
+3. Event Subscriptions -> Enable -> Request URL: `https://YOUR-APP.vercel.app/api/slack/events`
+4. Subscribe to: `message.im`, `message.channels`
+5. Interactivity -> Enable -> Request URL: same URL
+6. Install to workspace
+
+### 4. Create Google OAuth Credentials
+
+1. [Google Cloud Console](https://console.cloud.google.com) -> APIs & Services -> Enable Gmail API
+2. Credentials -> Create OAuth 2.0 Client ID (Web application)
+3. Authorized redirect URI: `https://YOUR-APP.vercel.app/api/auth/gmail_callback`
+4. OAuth consent screen -> Add your email as test user
+
+### 5. Deploy and Initialize
+
 ```bash
-git clone https://github.com/haasonsaas/email-agent.git
-cd email-agent
-docker-compose up --build -d
+vercel --prod
+
+# Create database tables
+curl https://YOUR-APP.vercel.app/api/health
+
+# Connect your first Gmail account (open in browser)
+https://YOUR-APP.vercel.app/api/auth/gmail_start?secret=YOUR_SETUP_SECRET
 ```
 
-## 🚀 Quick Start
-
-### 1. Initialize the Agent
-```bash
-email-agent init
-```
-
-### 2. Add Gmail Connector
-```bash
-email-agent config add-connector gmail
-```
-
-### 3. Sync Emails
-```bash
-email-agent sync --since yesterday
-```
-
-### 4. View Daily Brief
-```bash
-email-agent brief --today
-```
-
-### 5. Smart Action Processing
-```bash
-email-agent smart-actions --apply-labels --replies
-```
-
-## 🛠️ Commands Overview
-
-### Core Operations
-```bash
-# Full sync with AI processing
-email-agent sync --since "1 week ago" --brief
-
-# View system status and statistics
-email-agent status
-
-# Generate daily brief
-email-agent brief --today --detailed
-
-# Launch interactive dashboard
-email-agent dashboard
-```
-
-### AI-Powered Features
-```bash
-# Extract actions from emails with Gmail integration
-email-agent smart-actions --apply-labels --replies --events
-
-# Intelligent email handling
-email-agent auto-handle --verbose
-
-# Summarize email threads
-email-agent thread-summary --insights --overview
-
-# View smart inbox with AI triage
-email-agent smart-inbox --limit 50
-```
-
-### 🏢 CEO Intelligence Commands
-```bash
-# Setup CEO label system in Gmail
-email-agent ceo setup
-
-# Apply basic CEO labeling
-email-agent ceo label --limit 200
-
-# Enhanced intelligence with relationship analysis
-email-agent ceo intelligence --limit 100 --dry-run
-
-# Analyze strategic relationships
-email-agent ceo relationships --limit 1000
-
-# Thread continuity analysis
-email-agent ceo threads --limit 500
-
-# View CEO email insights
-email-agent ceo analyze
-```
-
-### Commitment & Task Management
-```bash
-# View commitments and deadlines
-email-agent commitments --report
-
-# View overdue items
-email-agent commitments --overdue
-
-# Mark commitment as completed
-email-agent mark-complete 123 --notes "Completed successfully"
-```
-
-### Learning & Feedback
-```bash
-# Provide feedback on AI decisions
-email-agent feedback email-123 --feedback "Category should be work" --correct "work"
-
-# View learning statistics
-email-agent learning-stats
-
-# Export learning data
-email-agent export-learning learning-backup.json
-```
-
-### Configuration & Management
-```bash
-# Add email connectors
-email-agent config add-connector gmail
-email-agent config add-connector imap
-
-# Manage categorization rules
-email-agent rule add "sender:github.com" work high
-
-# View categories and statistics
-email-agent cat list
-email-agent stats
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-```bash
-# Required
-OPENAI_API_KEY=your-openai-key
-GOOGLE_CLIENT_ID=your-gmail-client-id
-GOOGLE_CLIENT_SECRET=your-gmail-client-secret
-
-# Optional
-DATABASE_URL=sqlite:///data/email_agent.db
-LOG_LEVEL=INFO
-BRIEF_OUTPUT_DIR=./briefs
-```
-
-### Gmail Setup
-1. Create a Google Cloud Project
-2. Enable Gmail API
-3. Create OAuth 2.0 credentials
-4. Add credentials to the agent configuration
-
-## 🏗️ Architecture
-
-### Multi-Agent System
-```
-EmailAgentCrew
-├── CollectorAgent      # Email synchronization
-├── CategorizerAgent    # AI-powered categorization
-├── SummarizerAgent     # Content summarization
-├── ActionExtractor     # Action item extraction
-├── ThreadSummarizer    # Thread analysis
-├── LearningSystem      # Feedback processing
-└── CommitmentTracker   # Task management
-```
-
-### Data Flow
-```
-Email Sources → Collectors → Categorizers → Action Extractors → Database
-                    ↓              ↓              ↓
-              AI Processing → Smart Labels → Commitment Tracking
-                    ↓              ↓              ↓
-              Daily Briefs → Thread Summaries → Learning System
-```
-
-## 🎯 Use Cases
-
-### 📈 Executive/Manager
-- **Daily Brief**: Start each day with AI-generated email summaries
-- **Priority Inbox**: Focus on high-importance emails first
-- **Commitment Tracking**: Never miss deadlines or commitments
-- **Thread Summaries**: Quickly understand long email conversations
-
-### 👩‍💻 Developer/Knowledge Worker
-- **Smart Categorization**: Automatically organize technical emails
-- **Action Extraction**: Convert emails to actionable tasks
-- **Smart Labels**: Organize Gmail with intelligent labeling
-- **Learning System**: Improve AI decisions over time
-
-### 🏢 Teams & Organizations
-- **Bulk Processing**: Handle high email volumes efficiently
-- **Standardized Workflows**: Consistent email handling across team
-- **Analytics**: Understand email patterns and effectiveness
-- **Docker Deployment**: Easy containerized deployment
-
-## 📊 Example Outputs
-
-### Daily Brief
-```
-# Daily Email Brief - 2025-08-01
-
-## 📊 Statistics
-- Total Emails: 47
-- Unread: 23
-- High Priority: 8
-- Action Items: 12
-
-## 🔴 Urgent Actions
-1. Review budget proposal from Finance (Due: Today)
-2. Approve design mockups for client (Due: Tomorrow)
-3. Follow up on server migration status
-
-## 📅 Meetings & Events  
-- Team standup moved to 2 PM
-- Client presentation scheduled for Friday
-
-## 💡 Key Insights
-- 40% increase in support emails this week
-- 3 potential sales opportunities identified
-- Security alert requires immediate attention
-```
-
-### Smart Actions Output
-```
-🔍 Smart Action Extraction Starting...
-Found 15 emails to analyze for actions
-
-📧 Budget Q4 Planning Meeting Request
-   From: finance@company.com
-   📢 Needs response: urgent
-   📋 Actions: 1
-     • Review Q4 budget spreadsheet (Due: 2025-08-05)
-   📅 Meetings: 1
-     • schedule meeting
-   🏷️  Gmail labels applied
-   💬 Smart reply generated (234 chars)
-
-📊 Action Extraction Summary:
-  📋 Total action items: 23
-  🤝 Total commitments: 7
-  📅 Meeting requests: 4
-  ⏰ Items with deadlines: 15
-
-⚠️  3 items due TODAY!
-📅 8 items due this week
-```
-
-## 🧪 Development
-
-### Setup Development Environment
-```bash
-git clone https://github.com/haasonsaas/email-agent.git
-cd email-agent
-pip install -e ".[dev]"
-```
-
-### Running Tests
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=email_agent
-
-# Type checking
-mypy src/email_agent
-```
-
-### Code Quality
-```bash
-# Format code
-black src/
-isort src/
-
-# Lint code  
-ruff check src/
-
-# Quality analysis
-pyrefly check
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **OpenAI** for GPT-4 integration
-- **Google** for Gmail API
-- **Crew-AI** for multi-agent orchestration
-- **Typer** and **Textual** for beautiful CLI/TUI interfaces
-- **Rich** for terminal formatting
-- **SQLAlchemy** for robust data management
-
-## 🚀 Roadmap
-
-- [ ] Microsoft Outlook/Exchange integration
-- [ ] Slack/Teams integration for notifications
-- [ ] Natural language query interface
-- [ ] Email template generation
-- [ ] Advanced analytics dashboard
-- [ ] Multi-user support
-- [ ] Mobile app companion
-- [ ] Integration with task management tools (Todoist, Notion, etc.)
-
----
-
-**Built for productivity. Powered by AI. Privacy-first.** 🚀
+### 6. Set Up Cron
+
+Go to [cron-job.org](https://cron-job.org) (free):
+- URL: `https://YOUR-APP.vercel.app/api/cron/check_emails`
+- Schedule: every 30 minutes
+- Header: `Authorization: Bearer YOUR_CRON_SECRET`
+
+### 7. Test
+
+In `#email-agent`:
+- `status` — verify accounts connected
+- `onboard` — scan last 3 months of emails
+- `needs reply` — see what you owe responses to
+- `help` — see all commands
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full technical documentation including:
+- Design decisions and rationale
+- Database schema
+- Request flow diagrams
+- Triage pipeline details
+- Agent tool-calling architecture
+- Known issues and gotchas
+- Cost breakdown
+
+## Tech Stack
+
+- **Runtime:** Python on Vercel serverless functions
+- **Database:** Neon Postgres (via Vercel Marketplace)
+- **AI:** Claude Haiku 4.5 (tool-calling agent for Slack, triage + summarization + drafts)
+- **Email:** Gmail API with OAuth2 (multi-account)
+- **Chat:** Slack Web API + Events API
+- **Encryption:** Fernet (AES-128) for OAuth tokens at rest
+
+## Cost
+
+At typical usage (2 Gmail accounts, 30-min cron, ~10 Slack interactions/day):
+
+| Service | Cost |
+|---------|------|
+| Vercel | Free |
+| Neon Postgres | Free |
+| Claude Haiku | ~$1/month |
+| Gmail API | Free |
+| Slack API | Free |
+| cron-job.org | Free |
+| **Total** | **~$1/month** |
+
+## API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/health` | GET | DB check + migrations |
+| `/api/cron/check_emails` | GET | Hourly email sync (Bearer auth) |
+| `/api/cron/onboard` | GET | 3-month backfill (Bearer auth) |
+| `/api/slack/events` | POST | Slack events + buttons |
+| `/api/auth/gmail_start` | GET | OAuth2 initiation |
+| `/api/auth/gmail_callback` | GET | OAuth2 callback |
+
+## License
+
+MIT
