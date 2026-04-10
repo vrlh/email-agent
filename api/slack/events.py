@@ -316,17 +316,38 @@ def _tool_list_emails(params: dict) -> str:
 
 
 def _tool_needs_reply(params: dict) -> str:
-    from lib.db import get_needs_reply_emails, get_active_accounts
+    from lib.db import get_needs_reply_emails, get_active_accounts, mark_email_replied
+    from lib.gmail import check_thread_replied, credentials_from_encrypted, refresh_if_needed
     from datetime import datetime, timezone
 
     emails = get_needs_reply_emails()
     if not emails:
         return "No emails need a reply right now."
 
+    # Live-check Gmail for replies before showing the list
+    accounts_map = {a.id: a for a in get_active_accounts()}
+    verified_emails = []
+    for e in emails:
+        acct = accounts_map.get(e.account_id)
+        if acct and e.thread_id:
+            try:
+                creds = credentials_from_encrypted(acct.encrypted_tokens)
+                creds, _ = refresh_if_needed(creds)
+                if check_thread_replied(creds, e.thread_id, acct.email_address, after_msg_id=e.id):
+                    mark_email_replied(e.id)
+                    continue  # Skip — already replied
+            except Exception:
+                pass  # If check fails, keep it in the list to be safe
+        verified_emails.append(e)
+
+    emails = verified_emails
+    if not emails:
+        return "No emails need a reply right now. (Some were cleared — you already replied!)"
+
     global _last_displayed_emails
     _last_displayed_emails = emails
 
-    accounts = {a.id: a.email_address for a in get_active_accounts()}
+    accounts = {a.id: a.email_address for a in accounts_map.values()}
     lines = []
     for i, e in enumerate(emails, 1):
         acct = accounts.get(e.account_id, "")
