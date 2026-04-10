@@ -1,0 +1,313 @@
+"""Postgres database layer — NullPool engine for serverless, session factory, queries."""
+
+import os
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
+
+from sqlalchemy import create_engine, select, update
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
+
+from lib.db_models import (
+    Base,
+    EmailORM,
+    GmailAccountORM,
+    PendingDraftORM,
+    SyncLogORM,
+)
+
+_engine = None
+_SessionLocal = None
+
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(
+            os.environ["DATABASE_URL"],
+            poolclass=NullPool,
+            pool_pre_ping=True,
+        )
+    return _engine
+
+
+def get_session_factory():
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = sessionmaker(bind=get_engine())
+    return _SessionLocal
+
+
+@contextmanager
+def get_session():
+    factory = get_session_factory()
+    session = factory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def create_tables():
+    Base.metadata.create_all(get_engine())
+
+
+# ── Gmail Accounts ──
+
+
+def get_active_accounts() -> List[GmailAccountORM]:
+    with get_session() as session:
+        return list(
+            session.execute(
+                select(GmailAccountORM).where(GmailAccountORM.is_active.is_(True))
+            )
+            .scalars()
+            .all()
+        )
+
+
+def upsert_account(
+    account_id: str,
+    email_address: str,
+    display_name: Optional[str],
+    encrypted_tokens: str,
+) -> GmailAccountORM:
+    with get_session() as session:
+        account = session.get(GmailAccountORM, account_id)
+        if account:
+            account.email_address = email_address
+            account.display_name = display_name
+            account.encrypted_tokens = encrypted_tokens
+            account.updated_at = datetime.now(timezone.utc)
+        else:
+            account = GmailAccountORM(
+                id=account_id,
+                email_address=email_address,
+                display_name=display_name,
+                encrypted_tokens=encrypted_tokens,
+            )
+            session.add(account)
+        session.flush()
+        # Detach before returning so it's usable outside the session
+        session.expunge(account)
+        return account
+
+
+def update_account_sync(
+    account_id: str,
+    last_history_id: Optional[str] = None,
+) -> None:
+    with get_session() as session:
+        account = session.get(GmailAccountORM, account_id)
+        if account:
+            account.last_sync_at = datetime.now(timezone.utc)
+            if last_history_id is not None:
+                account.last_history_id = last_history_id
+            account.updated_at = datetime.now(timezone.utc)
+
+
+def update_account_tokens(account_id: str, encrypted_tokens: str) -> None:
+    with get_session() as session:
+        account = session.get(GmailAccountORM, account_id)
+        if account:
+            account.encrypted_tokens = encrypted_tokens
+            account.updated_at = datetime.now(timezone.utc)
+
+
+# ── Emails ──
+
+
+def upsert_emails(emails: List[EmailORM]) -> set:
+    """Insert emails, skipping duplicates. Returns set of newly inserted IDs."""
+    if not emails:
+        return set()
+    new_ids: set = set()
+    with get_session() as session:
+        for email_orm in emails:
+            existing = session.get(EmailORM, email_orm.id)
+            if existing is None:
+                session.add(email_orm)
+                new_ids.add(email_orm.id)
+    return new_ids
+
+
+def get_emails_for_account(
+    account_id: str,
+    unread_only: bool = False,
+    limit: int = 50,
+) -> List[EmailORM]:
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.account_id == account_id)
+            .order_by(EmailORM.date.desc())
+            .limit(limit)
+        )
+        if unread_only:
+            stmt = stmt.where(EmailORM.is_read.is_(False))
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+def get_unnotified_attention_emails() -> List[EmailORM]:
+    """Get emails that need attention and haven't been notified yet."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .where(EmailORM.triage_decision == "needs_attention")
+            .where(EmailORM.notified_at.is_(None))
+            .order_by(EmailORM.date.desc())
+        )
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+def mark_email_notified(email_id: str) -> None:
+    with get_session() as session:
+        email = session.get(EmailORM, email_id)
+        if email:
+            email.notified_at = datetime.now(timezone.utc)
+
+
+def get_email_by_id(email_id: str) -> Optional[EmailORM]:
+    with get_session() as session:
+        email = session.get(EmailORM, email_id)
+        if email:
+            session.expunge(email)
+        return email
+
+
+def get_recent_emails(limit: int = 20) -> List[EmailORM]:
+    """Get recent emails across all accounts."""
+    with get_session() as session:
+        stmt = (
+            select(EmailORM)
+            .order_by(EmailORM.date.desc())
+            .limit(limit)
+        )
+        results = list(session.execute(stmt).scalars().all())
+        for r in results:
+            session.expunge(r)
+        return results
+
+
+# ── Pending Drafts ──
+
+
+def get_pending_draft() -> Optional[PendingDraftORM]:
+    with get_session() as session:
+        stmt = select(PendingDraftORM).where(PendingDraftORM.status == "pending")
+        draft = session.execute(stmt).scalar_one_or_none()
+        if draft:
+            session.expunge(draft)
+        return draft
+
+
+def create_pending_draft(
+    account_id: str,
+    to_addresses: list,
+    subject: str,
+    body_text: str,
+    reply_to_email_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    cc_addresses: Optional[list] = None,
+    slack_message_ts: Optional[str] = None,
+) -> PendingDraftORM:
+    with get_session() as session:
+        # Cancel any existing pending draft
+        session.execute(
+            update(PendingDraftORM)
+            .where(PendingDraftORM.status == "pending")
+            .values(status="cancelled")
+        )
+        draft = PendingDraftORM(
+            id=str(uuid.uuid4()),
+            account_id=account_id,
+            reply_to_email_id=reply_to_email_id,
+            thread_id=thread_id,
+            to_addresses=to_addresses,
+            cc_addresses=cc_addresses,
+            subject=subject,
+            body_text=body_text,
+            status="pending",
+            slack_message_ts=slack_message_ts,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        session.add(draft)
+        session.flush()
+        session.expunge(draft)
+        return draft
+
+
+def update_draft_status(draft_id: str, status: str) -> None:
+    with get_session() as session:
+        draft = session.get(PendingDraftORM, draft_id)
+        if draft:
+            draft.status = status
+
+
+def update_draft_slack_ts(draft_id: str, slack_ts: str) -> None:
+    with get_session() as session:
+        draft = session.get(PendingDraftORM, draft_id)
+        if draft:
+            draft.slack_message_ts = slack_ts
+
+
+def update_draft_body(draft_id: str, body_text: str) -> None:
+    with get_session() as session:
+        draft = session.get(PendingDraftORM, draft_id)
+        if draft:
+            draft.body_text = body_text
+
+
+def expire_stale_drafts() -> int:
+    """Mark pending drafts past their expiry as expired. Returns count."""
+    now = datetime.now(timezone.utc)
+    with get_session() as session:
+        stmt = (
+            update(PendingDraftORM)
+            .where(PendingDraftORM.status == "pending")
+            .where(PendingDraftORM.expires_at < now)
+            .values(status="expired")
+        )
+        result = session.execute(stmt)
+        return result.rowcount
+
+
+# ── Sync Log ──
+
+
+def create_sync_log(account_id: str) -> int:
+    with get_session() as session:
+        log = SyncLogORM(account_id=account_id)
+        session.add(log)
+        session.flush()
+        log_id = log.id
+        return log_id
+
+
+def complete_sync_log(
+    log_id: int,
+    emails_fetched: int,
+    emails_new: int,
+    status: str = "completed",
+    error_message: Optional[str] = None,
+) -> None:
+    with get_session() as session:
+        log = session.get(SyncLogORM, log_id)
+        if log:
+            log.emails_fetched = emails_fetched
+            log.emails_new = emails_new
+            log.status = status
+            log.error_message = error_message
+            log.completed_at = datetime.now(timezone.utc)
