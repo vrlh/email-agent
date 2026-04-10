@@ -251,9 +251,12 @@ def create_gmail_draft(
 def check_thread_replied(
     creds: Credentials, thread_id: str, account_email: str, after_msg_id: str = ""
 ) -> bool:
-    """Check if the account owner has sent a real reply in a Gmail thread.
+    """Check if the account owner has already handled this email thread.
 
-    Skips calendar auto-responses and messages sent before the email in question.
+    Returns True if:
+    - The email being checked is FROM the owner (they sent it, ball is in other court)
+    - The owner sent a real reply AFTER the email in question
+    Skips calendar auto-responses.
     """
     service = _build_service(creds)
     try:
@@ -265,14 +268,21 @@ def check_thread_replied(
         account_lower = account_email.lower()
         messages = thread.get("messages", [])
 
-        # Find the index of the email we're checking (if after_msg_id provided)
-        start_idx = 1  # default: skip first message
+        # Find the email we're checking
+        start_idx = 1
         if after_msg_id:
             for i, msg in enumerate(messages):
                 if msg["id"] == after_msg_id:
+                    # Check if this email itself is FROM the owner
+                    headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+                    from_addr = headers.get("From", "").lower()
+                    if account_lower in from_addr:
+                        return True  # Owner sent this email — no reply needed
+
                     start_idx = i + 1
                     break
 
+        # Check if owner sent a reply after this email
         for msg in messages[start_idx:]:
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
             from_addr = headers.get("From", "").lower()
@@ -289,7 +299,6 @@ def check_thread_replied(
             if "text/calendar" in content_type:
                 continue
 
-            # This is a real reply from the owner
             return True
 
         return False
