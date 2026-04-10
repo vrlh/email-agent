@@ -183,17 +183,28 @@ def _process_account(account) -> dict:
 
         new_ids = upsert_emails(orm_objects)
 
-        # ── 6. Collect attention emails (for summary notification) ──
+        # ── 6. Sync reply status from Gmail (BEFORE collecting notifications) ──
+        replies_synced = _sync_reply_status(account, creds)
+
+        # ── 7. Collect attention emails (for summary notification) ──
         new_emails = [e for e in emails if e.id in new_ids]
         attention_emails, archived_count = _collect_attention_emails(new_emails, triage_map)
+
+        # Filter out emails that were just marked as replied by sync
+        from lib.db import get_email_by_id
+        filtered_attention = []
+        for ae in attention_emails:
+            orm = get_email_by_id(ae["id"])
+            if orm and not orm.replied_at:
+                filtered_attention.append(ae)
+            else:
+                archived_count += 1
+        attention_emails = filtered_attention
 
         # Mark notified
         from lib.db import mark_email_notified
         for ae in attention_emails:
             mark_email_notified(ae["id"])
-
-        # ── 7. Sync reply status from Gmail ──
-        replies_synced = _sync_reply_status(account, creds)
 
         # ── 8. Update sync state ──
         update_account_sync(account.id, new_history_id)
