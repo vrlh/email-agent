@@ -312,7 +312,7 @@ def _tool_list_emails(params: dict) -> str:
 
     blocks = build_email_list_blocks(model_emails, account_map)
     _reply(f"{len(model_emails)} email(s)", blocks=blocks)
-    return f"Displayed {len(model_emails)} emails."
+    return f"[Already displayed to user] {len(model_emails)} emails shown."
 
 
 def _tool_needs_reply(params: dict) -> str:
@@ -363,11 +363,10 @@ def _tool_needs_reply(params: dict) -> str:
                 age = f" ({int(hours / 24)}d ago)"
         lines.append(f"#{i} {e.subject} — {e.sender_email}{acct_tag}{age}")
 
-    result = f"{len(emails)} email(s) need your reply:\n" + "\n".join(lines)
     _reply(f"\u23f3 *{len(emails)} email(s) need your reply:*\n\n" + "\n".join(
         f"\u2022 *#{i+1}* {lines[i].split(' ', 1)[1]}" for i in range(len(lines))
     ))
-    return result
+    return f"[Already displayed to user] {len(emails)} emails need reply."
 
 
 def _tool_summarize(params: dict) -> str:
@@ -381,7 +380,7 @@ def _tool_summarize(params: dict) -> str:
     summary = summarize_email(model_email)
     blocks = build_summary_blocks(model_email, summary)
     _reply(f"Summary: {model_email.subject}", blocks=blocks)
-    return f"Summary of '{model_email.subject}': {summary}"
+    return f"[Already displayed to user] Summary of '{model_email.subject}'"
 
 
 def _tool_reply(params: dict) -> str:
@@ -546,7 +545,7 @@ def _tool_list_rules(params: dict) -> str:
     rules = get_user_rules()
     blocks = build_rules_list_blocks(rules)
     _reply("Your rules", blocks=blocks)
-    return f"{len(rules)} rule(s) configured."
+    return f"[Already displayed to user] {len(rules)} rule(s) configured."
 
 
 def _tool_status(params: dict) -> str:
@@ -564,7 +563,7 @@ def _tool_status(params: dict) -> str:
     draft = get_pending_draft()
     blocks = build_status_blocks(acct_data, pending_draft=draft is not None)
     _reply("Status", blocks=blocks)
-    return f"{len(accounts)} account(s) connected."
+    return f"[Already displayed to user] {len(accounts)} account(s) connected."
 
 
 def _tool_onboard(params: dict) -> str:
