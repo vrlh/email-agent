@@ -4,7 +4,6 @@ import os
 from typing import Any, Dict, List, Optional
 
 from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 
 from lib.models import Email, EmailCategory, EmailPriority, TriageDecision
 

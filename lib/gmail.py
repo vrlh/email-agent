@@ -144,7 +144,11 @@ def _fetch_messages_by_ids(
 ) -> List[Email]:
     import time
     emails: List[Email] = []
-    for mid in message_ids:
+    retries = 0
+    max_retries = 3
+    i = 0
+    while i < len(message_ids):
+        mid = message_ids[i]
         try:
             raw = (
                 service.users()
@@ -153,11 +157,14 @@ def _fetch_messages_by_ids(
                 .execute()
             )
             emails.append(_parse_message(raw, account_id))
+            retries = 0
+            i += 1
         except HttpError as exc:
-            if exc.resp.status == 429:
-                time.sleep(2)  # Back off on rate limit
-                continue
-            continue
+            if exc.resp.status == 429 and retries < max_retries:
+                retries += 1
+                time.sleep(2 * retries)
+                continue  # retry same message
+            i += 1  # skip on non-429 or max retries exceeded
     return emails
 
 
