@@ -104,7 +104,10 @@ class handler(BaseHTTPRequestHandler):
             client_secret=tokens["client_secret"],
         )
         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-        profile = service.users().getProfile(userId="me").execute()
+        try:
+            profile = service.users().getProfile(userId="me").execute()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to fetch Gmail profile: {exc}") from exc
         email_address = profile.get("emailAddress", "")
         # Gmail profile doesn't return a display name; use email prefix
         display_name = email_address.split("@")[0] if email_address else ""

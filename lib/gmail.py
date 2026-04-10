@@ -133,8 +133,11 @@ def _fetch_recent(
     emails = _fetch_messages_by_ids(service, account_id, message_ids)
 
     # Get current history ID for future incremental syncs
-    profile = service.users().getProfile(userId="me").execute()
-    history_id = str(profile.get("historyId", ""))
+    try:
+        profile = service.users().getProfile(userId="me").execute()
+        history_id = str(profile.get("historyId", ""))
+    except HttpError:
+        history_id = None
 
     return emails, history_id
 
@@ -191,13 +194,16 @@ def send_reply(
     msg["References"] = in_reply_to_message_id
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = (
-        service.users()
-        .messages()
-        .send(userId="me", body={"raw": raw, "threadId": thread_id})
-        .execute()
-    )
-    return sent["id"]
+    try:
+        sent = (
+            service.users()
+            .messages()
+            .send(userId="me", body={"raw": raw, "threadId": thread_id})
+            .execute()
+        )
+        return sent["id"]
+    except HttpError as exc:
+        raise RuntimeError(f"Gmail send failed: {exc.resp.status} {exc.reason}") from exc
 
 
 def send_new_email(
@@ -214,13 +220,16 @@ def send_new_email(
     msg["Subject"] = subject
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = (
-        service.users()
-        .messages()
-        .send(userId="me", body={"raw": raw})
-        .execute()
-    )
-    return sent["id"]
+    try:
+        sent = (
+            service.users()
+            .messages()
+            .send(userId="me", body={"raw": raw})
+            .execute()
+        )
+        return sent["id"]
+    except HttpError as exc:
+        raise RuntimeError(f"Gmail send failed: {exc.resp.status} {exc.reason}") from exc
 
 
 def create_gmail_draft(
@@ -246,8 +255,11 @@ def create_gmail_draft(
     if thread_id:
         body["message"]["threadId"] = thread_id
 
-    draft = service.users().drafts().create(userId="me", body=body).execute()
-    return draft["id"]
+    try:
+        draft = service.users().drafts().create(userId="me", body=body).execute()
+        return draft["id"]
+    except HttpError as exc:
+        raise RuntimeError(f"Gmail draft failed: {exc.resp.status} {exc.reason}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +362,11 @@ def fetch_inbox_emails_since(
 
     emails = _fetch_messages_by_ids(service, account_id, all_message_ids[:max_results])
 
-    profile = service.users().getProfile(userId="me").execute()
-    history_id = str(profile.get("historyId", ""))
+    try:
+        profile = service.users().getProfile(userId="me").execute()
+        history_id = str(profile.get("historyId", ""))
+    except HttpError:
+        history_id = None
 
     return emails, history_id
 

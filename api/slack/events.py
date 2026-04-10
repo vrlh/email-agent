@@ -633,13 +633,6 @@ def _cmd_help(params: dict):
     )
 
 
-# (Legacy _cmd_* functions removed — agent tool executors handle all commands now)
-# Keeping this comment so future sessions know the dead code was intentionally removed.
-
-
-DEAD_CODE_REMOVED = True  # search marker — safe to remove this line too
-
-
 # ======================================================================
 # Interactive action handlers (button clicks)
 # ======================================================================
