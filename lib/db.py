@@ -23,6 +23,7 @@ from lib.db_models import (
 
 _engine = None
 _SessionLocal = None
+_migrations_ran = False
 
 
 def get_engine():
@@ -45,6 +46,7 @@ def get_session_factory():
 
 @contextmanager
 def get_session():
+    _ensure_migrations()
     factory = get_session_factory()
     session = factory()
     try:
@@ -57,16 +59,33 @@ def get_session():
         session.close()
 
 
+def _ensure_migrations():
+    """Apply lightweight idempotent migrations once per function instance.
+
+    Runs on first DB access so paths that skip create_tables() (e.g., Slack
+    events) still get the schema brought up-to-date. Each ALTER uses
+    IF NOT EXISTS so concurrent instances can race safely.
+    """
+    global _migrations_ran
+    if _migrations_ran:
+        return
+    from sqlalchemy import text
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE pending_draft "
+                "ADD COLUMN IF NOT EXISTS bcc_addresses jsonb"
+            ))
+    except Exception:
+        # If the table doesn't exist yet, create_tables() will handle it.
+        pass
+    _migrations_ran = True
+
+
 def create_tables():
     engine = get_engine()
     Base.metadata.create_all(engine)
-    # Lightweight in-place migrations for columns added after initial deploy.
-    # Idempotent — safe to run on every cold start.
-    from sqlalchemy import text
-    with engine.begin() as conn:
-        conn.execute(text(
-            "ALTER TABLE pending_draft ADD COLUMN IF NOT EXISTS bcc_addresses jsonb"
-        ))
+    _ensure_migrations()
 
 
 # ── Gmail Accounts ──
