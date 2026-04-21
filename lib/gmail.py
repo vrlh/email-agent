@@ -183,6 +183,8 @@ def send_reply(
     body_text: str,
     thread_id: str,
     in_reply_to_message_id: str,
+    cc: Optional[List[str]] = None,
+    bcc: Optional[List[str]] = None,
 ) -> str:
     """Send a threaded reply.  Returns the new message ID."""
     service = _build_service(creds)
@@ -192,6 +194,11 @@ def send_reply(
     msg["Subject"] = subject
     msg["In-Reply-To"] = in_reply_to_message_id
     msg["References"] = in_reply_to_message_id
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if bcc:
+        # Gmail honors Bcc from raw MIME and strips the header on delivery.
+        msg["Bcc"] = ", ".join(bcc)
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     try:
@@ -211,6 +218,8 @@ def send_new_email(
     to: str,
     subject: str,
     body_text: str,
+    cc: Optional[List[str]] = None,
+    bcc: Optional[List[str]] = None,
 ) -> str:
     """Send a brand-new email (not a reply).  Returns the new message ID."""
     service = _build_service(creds)
@@ -218,6 +227,10 @@ def send_new_email(
     msg = MIMEText(body_text)
     msg["To"] = to
     msg["Subject"] = subject
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if bcc:
+        msg["Bcc"] = ", ".join(bcc)
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     try:

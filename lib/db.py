@@ -58,7 +58,15 @@ def get_session():
 
 
 def create_tables():
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    # Lightweight in-place migrations for columns added after initial deploy.
+    # Idempotent — safe to run on every cold start.
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE pending_draft ADD COLUMN IF NOT EXISTS bcc_addresses jsonb"
+        ))
 
 
 # ── Gmail Accounts ──
@@ -332,6 +340,7 @@ def create_pending_draft(
     reply_to_email_id: Optional[str] = None,
     thread_id: Optional[str] = None,
     cc_addresses: Optional[list] = None,
+    bcc_addresses: Optional[list] = None,
     slack_message_ts: Optional[str] = None,
 ) -> PendingDraftORM:
     with get_session() as session:
@@ -348,6 +357,7 @@ def create_pending_draft(
             thread_id=thread_id,
             to_addresses=to_addresses,
             cc_addresses=cc_addresses,
+            bcc_addresses=bcc_addresses,
             subject=subject,
             body_text=body_text,
             status="pending",

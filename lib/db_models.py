@@ -94,6 +94,7 @@ class PendingDraftORM(Base):
     thread_id = Column(String)
     to_addresses = Column(JSONB, nullable=False)
     cc_addresses = Column(JSONB)
+    bcc_addresses = Column(JSONB)
     subject = Column(Text, nullable=False)
     body_text = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="pending", index=True)

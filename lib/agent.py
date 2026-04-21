@@ -28,6 +28,15 @@ AGENT_SYSTEM = (
     "- You can call multiple tools in one turn if needed.\n"
     "- For reply drafts, always use the reply_to_email tool — it will show the user "
     "a draft with Send/Cancel buttons. Don't just write the reply text.\n"
+    "- For NEW outbound emails (not replying to anything in the inbox), use the "
+    "compose_email tool. You write the subject and body yourself based on the user's "
+    "instruction. Always show the draft with Send/Cancel — never send without review.\n"
+    "- CC vs BCC: CC (carbon copy) is visible to all recipients — use when the "
+    "copied party should be known. BCC (blind carbon copy) hides the copied address "
+    "from other recipients — use for: mass sends where recipients shouldn't see each "
+    "other's addresses, introductions where you're dropping a third party off the "
+    "thread (\"moving X to BCC\"), or confidential loops (e.g., copying a manager "
+    "without signaling it). If the user says \"copy\" without qualifying, default to CC.\n"
     "- IMPORTANT: Tools that display data (list_emails, get_needs_reply, summarize_email, "
     "list_rules, get_status) already send formatted messages to the user. "
     "After calling these tools, DO NOT repeat or reformat the data. "
@@ -205,6 +214,43 @@ TOOLS = [
                     "description": "If true, re-triages all emails. Default false.",
                 },
             },
+        },
+    },
+    {
+        "name": "compose_email",
+        "description": "Draft a brand-new outbound email (not a reply). The draft is shown with Send/Cancel buttons. You choose the subject and body text based on the user's instruction. Supports To, Cc, and Bcc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Primary recipient email addresses.",
+                },
+                "cc": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "CC recipients — visible to everyone. Optional.",
+                },
+                "bcc": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "BCC recipients — hidden from other recipients. Optional. Use for mass sends, introductions where you're dropping someone from the thread, or confidential copies.",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject line.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Full email body text you've written for the user.",
+                },
+                "from_account": {
+                    "type": "string",
+                    "description": "Which connected Gmail account to send from (email address). Optional — if omitted or only one account exists, uses the default.",
+                },
+            },
+            "required": ["to", "subject", "body"],
         },
     },
     {

@@ -187,18 +187,24 @@ def build_draft_review_blocks(
     to: str,
     subject: str,
     body: str,
+    cc: str = "",
+    bcc: str = "",
+    kind: str = "reply",
 ) -> List[Dict[str, Any]]:
     """Build Block Kit blocks for a draft review message with Send/Cancel buttons."""
     body_preview = body[:1500]
+    label = "Draft reply" if kind == "reply" else "New email draft"
+    fields = [
+        {"type": "mrkdwn", "text": f"*To:* {to}"},
+        {"type": "mrkdwn", "text": f"*Subject:* {subject}"},
+    ]
+    if cc:
+        fields.append({"type": "mrkdwn", "text": f"*Cc:* {cc}"})
+    if bcc:
+        fields.append({"type": "mrkdwn", "text": f"*Bcc:* {bcc}"})
     return [
-        _text_block(f"\u270f\ufe0f *Draft reply* from {account_email}"),
-        {
-            "type": "section",
-            "fields": [
-                {"type": "mrkdwn", "text": f"*To:* {to}"},
-                {"type": "mrkdwn", "text": f"*Subject:* {subject}"},
-            ],
-        },
+        _text_block(f"\u270f\ufe0f *{label}* from {account_email}"),
+        {"type": "section", "fields": fields},
         _text_block(f"```\n{body_preview}\n```"),
         {
             "type": "actions",

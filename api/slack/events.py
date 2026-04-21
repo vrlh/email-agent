@@ -257,6 +257,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         "onboard": _tool_onboard,
         "check_reply_status": _tool_check_reply_status,
         "reauth": _tool_reauth,
+        "compose_email": _tool_compose,
     }
     executor = executors.get(tool_name)
     if not executor:
@@ -492,11 +493,15 @@ def _tool_edit(params: dict) -> str:
     accounts = {a.id: a for a in get_active_accounts()}
     acct = accounts.get(draft.account_id)
     account_email = acct.email_address if acct else ""
-    to_display = draft.to_addresses[0].get("email", "") if draft.to_addresses else ""
+
+    def _join(addrs):
+        return ", ".join(a.get("email", "") for a in (addrs or []) if a.get("email"))
 
     blocks = build_draft_review_blocks(
         draft_id=draft.id, account_email=account_email,
-        to=to_display, subject=draft.subject, body=new_body,
+        to=_join(draft.to_addresses), subject=draft.subject, body=new_body,
+        cc=_join(draft.cc_addresses), bcc=_join(draft.bcc_addresses),
+        kind="reply" if draft.reply_to_email_id else "compose",
     )
     _reply("Updated draft", blocks=blocks)
     return "Draft updated."
@@ -578,6 +583,79 @@ def _tool_onboard(params: dict) -> str:
     from lib.onboard import run_onboard
     result = run_onboard(force=force)
     return f"Onboard complete. {result.get('total_needs_reply', 0)} email(s) need reply."
+
+
+def _tool_compose(params: dict) -> str:
+    from lib.db import create_pending_draft, get_active_accounts, update_draft_slack_ts
+    from lib.slack_client import build_draft_review_blocks
+
+    to = _normalize_addrs(params.get("to"))
+    if not to:
+        return "No recipient provided."
+
+    subject = (params.get("subject") or "").strip()
+    body = (params.get("body") or "").strip()
+    if not subject or not body:
+        return "Subject and body are both required."
+
+    cc = _normalize_addrs(params.get("cc"))
+    bcc = _normalize_addrs(params.get("bcc"))
+
+    accounts = get_active_accounts()
+    if not accounts:
+        return "No Gmail accounts connected. Connect one before composing."
+
+    from_account = (params.get("from_account") or "").strip().lower()
+    acct = None
+    if from_account:
+        for a in accounts:
+            if a.email_address.lower() == from_account:
+                acct = a
+                break
+        if not acct:
+            return f"No connected account matches '{from_account}'."
+    else:
+        acct = accounts[0]
+
+    to_list = [{"email": e, "name": ""} for e in to]
+    cc_list = [{"email": e, "name": ""} for e in cc] if cc else None
+    bcc_list = [{"email": e, "name": ""} for e in bcc] if bcc else None
+
+    draft = create_pending_draft(
+        account_id=acct.id,
+        to_addresses=to_list,
+        cc_addresses=cc_list,
+        bcc_addresses=bcc_list,
+        subject=subject,
+        body_text=body,
+    )
+
+    blocks = build_draft_review_blocks(
+        draft_id=draft.id,
+        account_email=acct.email_address,
+        to=", ".join(to),
+        cc=", ".join(cc) if cc else "",
+        bcc=", ".join(bcc) if bcc else "",
+        subject=subject,
+        body=body,
+        kind="compose",
+    )
+    ts = _reply(f"New email draft to {', '.join(to)}", blocks=blocks)
+    update_draft_slack_ts(draft.id, ts)
+    return f"Compose draft created for {', '.join(to)}. Showing Send/Cancel buttons."
+
+
+def _normalize_addrs(value) -> list:
+    """Accept a list[str] or a comma-separated string; return a stripped list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",")]
+    elif isinstance(value, list):
+        parts = [str(p).strip() for p in value]
+    else:
+        return []
+    return [p for p in parts if p]
 
 
 def _tool_reauth(params: dict) -> str:
@@ -681,6 +759,8 @@ def _handle_send(draft_id: str):
         d_subject = draft.subject
         d_body = draft.body_text
         d_to = draft.to_addresses
+        d_cc = draft.cc_addresses or []
+        d_bcc = draft.bcc_addresses or []
         d_slack_ts = draft.slack_message_ts
 
     accounts = {a.id: a for a in get_active_accounts()}
@@ -692,28 +772,36 @@ def _handle_send(draft_id: str):
     creds = credentials_from_encrypted(acct.encrypted_tokens)
     creds, _ = refresh_if_needed(creds)
 
-    to_email = d_to[0].get("email", "") if d_to else ""
+    to_header = ", ".join(a.get("email", "") for a in d_to if a.get("email"))
+    cc_list = [a.get("email", "") for a in d_cc if a.get("email")]
+    bcc_list = [a.get("email", "") for a in d_bcc if a.get("email")]
 
     if d_reply_to and d_thread_id:
         # Threaded reply — need the original message's Message-ID header
         from lib.db import get_email_by_id
         orig = get_email_by_id(d_reply_to)
         in_reply_to = orig.message_id if orig else d_reply_to
-        send_reply(creds, to_email, d_subject, d_body, d_thread_id, in_reply_to)
+        send_reply(
+            creds, to_header, d_subject, d_body, d_thread_id, in_reply_to,
+            cc=cc_list or None, bcc=bcc_list or None,
+        )
     else:
-        send_new_email(creds, to_email, d_subject, d_body)
+        send_new_email(
+            creds, to_header, d_subject, d_body,
+            cc=cc_list or None, bcc=bcc_list or None,
+        )
 
     update_draft_status(draft_id, "sent")
 
     # Update the Slack message to show confirmation
-    blocks = build_sent_confirmation_blocks(acct.email_address, to_email, d_subject)
+    blocks = build_sent_confirmation_blocks(acct.email_address, to_header, d_subject)
     if d_slack_ts:
         try:
-            update_message(d_slack_ts, f"Email sent to {to_email}", blocks=blocks)
+            update_message(d_slack_ts, f"Email sent to {to_header}", blocks=blocks)
         except Exception:
-            _reply(f"\u2705 Email sent to {to_email}", blocks=blocks)
+            _reply(f"\u2705 Email sent to {to_header}", blocks=blocks)
     else:
-        _reply(f"\u2705 Email sent to {to_email}", blocks=blocks)
+        _reply(f"\u2705 Email sent to {to_header}", blocks=blocks)
 
 
 def _handle_cancel(draft_id: str):
