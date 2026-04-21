@@ -85,11 +85,15 @@ def upsert_account(
     encrypted_tokens: str,
 ) -> GmailAccountORM:
     with get_session() as session:
-        account = session.get(GmailAccountORM, account_id)
+        account = session.execute(
+            select(GmailAccountORM).where(
+                GmailAccountORM.email_address == email_address
+            )
+        ).scalar_one_or_none()
         if account:
-            account.email_address = email_address
             account.display_name = display_name
             account.encrypted_tokens = encrypted_tokens
+            account.is_active = True
             account.updated_at = datetime.now(timezone.utc)
         else:
             account = GmailAccountORM(

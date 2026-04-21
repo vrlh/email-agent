@@ -256,6 +256,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         "get_status": _tool_status,
         "onboard": _tool_onboard,
         "check_reply_status": _tool_check_reply_status,
+        "reauth": _tool_reauth,
     }
     executor = executors.get(tool_name)
     if not executor:
@@ -577,6 +578,29 @@ def _tool_onboard(params: dict) -> str:
     from lib.onboard import run_onboard
     result = run_onboard(force=force)
     return f"Onboard complete. {result.get('total_needs_reply', 0)} email(s) need reply."
+
+
+def _tool_reauth(params: dict) -> str:
+    import os
+
+    setup_secret = os.environ.get("SETUP_SECRET", "")
+    app_url = os.environ.get("APP_URL", "").rstrip("/")
+    if not app_url:
+        return "APP_URL is not configured — can't build re-auth link."
+    if not setup_secret:
+        return "SETUP_SECRET is not configured — can't build re-auth link."
+
+    reauth_url = f"{app_url}/api/auth/gmail_start?secret={setup_secret}"
+    target = params.get("email", "").strip()
+    target_line = f" for *{target}*" if target else ""
+
+    _reply(
+        f"\U0001f511 *Reconnect Gmail{target_line}*\n"
+        f"<{reauth_url}|Click here to re-authenticate>, then sign in with the Google "
+        "account you want to reconnect. Your existing emails and rules are preserved — "
+        "only the tokens get refreshed."
+    )
+    return "[Already displayed to user] Re-auth link sent."
 
 
 def _tool_check_reply_status(params: dict) -> str:
