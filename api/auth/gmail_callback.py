@@ -56,8 +56,7 @@ class handler(BaseHTTPRequestHandler):
 
             self._respond(
                 200,
-                f"<h2>Connected {email_address}</h2>"
-                f"<p>Account added and email onboarding started. Check Slack for updates.</p>",
+                _success_page(email_address),
                 content_type="text/html",
             )
         except Exception as exc:
@@ -118,3 +117,53 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.end_headers()
         self.wfile.write(body.encode())
+
+
+def _success_page(email_address: str) -> str:
+    """HTML page shown after OAuth callback completes."""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Connected</title>
+<style>
+  html, body {{ height: 100%; margin: 0; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f7fa; color: #1a1a1a;
+    display: flex; align-items: center; justify-content: center;
+  }}
+  .card {{
+    background: white; padding: 2.5rem 3rem; border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08); max-width: 420px; text-align: center;
+  }}
+  .check {{
+    width: 56px; height: 56px; border-radius: 50%; background: #22c55e;
+    color: white; font-size: 32px; line-height: 56px; margin: 0 auto 1rem;
+  }}
+  h1 {{ font-size: 1.25rem; margin: 0 0 0.5rem; }}
+  p {{ color: #555; margin: 0.5rem 0; line-height: 1.5; }}
+  .email {{ font-weight: 600; color: #111; }}
+  .btn {{
+    display: inline-block; margin-top: 1.25rem; padding: 0.65rem 1.25rem;
+    background: #4a154b; color: white; text-decoration: none;
+    border-radius: 8px; font-weight: 500;
+  }}
+  .hint {{ font-size: 0.85rem; color: #888; margin-top: 1rem; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="check">&#10003;</div>
+  <h1>Gmail connected</h1>
+  <p class="email">{email_address}</p>
+  <p>Tokens refreshed. Onboarding is running in the background — check Slack for updates.</p>
+  <a class="btn" href="slack://open">Open Slack</a>
+  <p class="hint">You can close this tab.</p>
+</div>
+<script>
+  // Attempt to auto-close (only works if opened via window.open)
+  setTimeout(function() {{ try {{ window.close(); }} catch (e) {{}} }}, 1500);
+</script>
+</body>
+</html>"""
