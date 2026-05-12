@@ -106,6 +106,7 @@ def _process_account(account) -> dict:
     from lib.db import (
         complete_sync_log,
         create_sync_log,
+        mark_account_needs_reauth,
         update_account_sync,
         update_account_tokens,
         upsert_emails,
@@ -121,12 +122,24 @@ def _process_account(account) -> dict:
     from lib.rules.builtin import BuiltinRules
     from lib.rules.engine import RulesEngine
 
+    from google.auth.exceptions import RefreshError
+
+    # Skip accounts already flagged as needing reauth — the user has to
+    # reconnect via the OAuth flow before we'll try again.
+    if getattr(account, "needs_reauth", False):
+        return {"account": account.email_address, "skipped": "needs_reauth"}
+
     log_id = create_sync_log(account.id)
 
     try:
         # ── 1. Credentials ──
         creds = credentials_from_encrypted(account.encrypted_tokens)
-        creds, was_refreshed = refresh_if_needed(creds)
+        try:
+            creds, was_refreshed = refresh_if_needed(creds)
+        except RefreshError as exc:
+            mark_account_needs_reauth(account.id, True)
+            complete_sync_log(log_id, 0, 0, status="failed", error_message=f"needs_reauth: {exc}")
+            return {"account": account.email_address, "error": "needs_reauth"}
         if was_refreshed:
             update_account_tokens(account.id, credentials_to_encrypted(creds))
 
@@ -312,15 +325,36 @@ def _sync_reply_status(account, creds) -> int:
 
 def _send_summary(emails_by_account: dict, total_archived: int, unreplied_emails=None) -> int:
     """Send a single summary message to the channel. Returns count of emails notified."""
+    from lib.db import get_active_accounts
     from lib.slack_client import build_cron_summary_blocks, send_dm
 
     total = sum(len(v) for v in emails_by_account.values())
     unreplied_count = len(unreplied_emails) if unreplied_emails else 0
 
-    if total == 0 and unreplied_count == 0:
+    reauth_needed = [
+        a for a in get_active_accounts() if getattr(a, "needs_reauth", False)
+    ]
+    reauth_count = len(reauth_needed)
+
+    if total == 0 and unreplied_count == 0 and reauth_count == 0:
         return 0
 
     blocks = build_cron_summary_blocks(emails_by_account, total_archived)
+
+    # Prepend reauth reminder if any accounts are flagged.
+    if reauth_count > 0:
+        addrs = ", ".join(a.email_address for a in reauth_needed)
+        reauth_block = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"\U0001f511 *{reauth_count} account(s) need reconnect:* {addrs}\n"
+                    "Ask the assistant to reconnect each one \u2014 emails won't sync until you do."
+                ),
+            },
+        }
+        blocks.insert(0, reauth_block)
 
     # Append needs-reply reminder if there are outstanding items
     if unreplied_count > 0:
@@ -331,10 +365,14 @@ def _send_summary(emails_by_account: dict, total_archived: int, unreplied_emails
             lines.append(f"_...and {unreplied_count - 10} more. Type \"needs reply\" to see all._")
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
 
-    if total == 0 and unreplied_count > 0:
-        send_dm(f"{unreplied_count} email(s) still need your reply", blocks=blocks)
+    if total > 0:
+        headline = f"{total} new email(s) need attention"
+    elif unreplied_count > 0:
+        headline = f"{unreplied_count} email(s) still need your reply"
     else:
-        send_dm(f"{total} new email(s) need attention", blocks=blocks)
+        headline = f"{reauth_count} account(s) need reconnect"
+
+    send_dm(headline, blocks=blocks)
     return total
 
 

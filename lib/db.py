@@ -76,6 +76,10 @@ def _ensure_migrations():
                 "ALTER TABLE pending_draft "
                 "ADD COLUMN IF NOT EXISTS bcc_addresses jsonb"
             ))
+            conn.execute(text(
+                "ALTER TABLE gmail_accounts "
+                "ADD COLUMN IF NOT EXISTS needs_reauth boolean NOT NULL DEFAULT false"
+            ))
     except Exception:
         # If the table doesn't exist yet, create_tables() will handle it.
         pass
@@ -121,6 +125,7 @@ def upsert_account(
             account.display_name = display_name
             account.encrypted_tokens = encrypted_tokens
             account.is_active = True
+            account.needs_reauth = False
             account.updated_at = datetime.now(timezone.utc)
         else:
             account = GmailAccountORM(
@@ -154,6 +159,20 @@ def update_account_tokens(account_id: str, encrypted_tokens: str) -> None:
         account = session.get(GmailAccountORM, account_id)
         if account:
             account.encrypted_tokens = encrypted_tokens
+            account.updated_at = datetime.now(timezone.utc)
+
+
+def mark_account_needs_reauth(account_id: str, needs_reauth: bool) -> None:
+    """Set or clear the needs_reauth flag on an account.
+
+    The cron pipeline sets True when a token refresh raises RefreshError; the
+    OAuth callback's upsert_account path clears it on successful reconnect, so
+    callers rarely need to pass False explicitly.
+    """
+    with get_session() as session:
+        account = session.get(GmailAccountORM, account_id)
+        if account:
+            account.needs_reauth = needs_reauth
             account.updated_at = datetime.now(timezone.utc)
 
 

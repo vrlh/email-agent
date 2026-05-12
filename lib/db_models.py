@@ -29,6 +29,7 @@ class GmailAccountORM(Base):
     display_name = Column(String)
     encrypted_tokens = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
+    needs_reauth = Column(Boolean, nullable=False, default=False)
     last_sync_at = Column(DateTime(timezone=True))
     last_history_id = Column(String)
     created_at = Column(

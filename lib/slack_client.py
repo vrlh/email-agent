@@ -276,7 +276,8 @@ def build_status_blocks(
     lines = ["\U0001f4ca *Status*\n"]
     for acct in accounts:
         sync = acct.get("last_sync", "never")
-        lines.append(f"\u2022 *{acct['email']}* \u2014 last sync: {sync}")
+        marker = " \u2014 \u26a0\ufe0f *needs reconnect*" if acct.get("needs_reauth") else ""
+        lines.append(f"\u2022 *{acct['email']}* \u2014 last sync: {sync}{marker}")
     lines.append(f"\nPending draft: {'Yes' if pending_draft else 'None'}")
     return [_text_block("\n".join(lines))]
 

@@ -573,6 +573,7 @@ def _tool_status(params: dict) -> str:
         acct_data.append({
             "email": a.email_address,
             "last_sync": a.last_sync_at.strftime("%b %d, %H:%M") if a.last_sync_at else "never",
+            "needs_reauth": getattr(a, "needs_reauth", False),
         })
 
     draft = get_pending_draft()
@@ -685,7 +686,11 @@ def _tool_reauth(params: dict) -> str:
     if not setup_secret:
         return "SETUP_SECRET is not configured — can't build re-auth link."
 
-    reauth_url = f"{app_url}/api/auth/gmail_start?secret={setup_secret}"
+    from urllib.parse import urlencode
+    reauth_url = (
+        f"{app_url}/api/auth/gmail_start?"
+        f"{urlencode({'secret': setup_secret, 'hint': target})}"
+    )
     _reply(
         f"\U0001f511 *Reconnect Gmail for {target}*\n"
         f"<{reauth_url}|Click here to re-authenticate>, then sign in as *{target}* "

@@ -65,3 +65,32 @@ def test_email_present_but_app_url_missing_returns_config_error(monkeypatch, mak
 
     assert "APP_URL is not configured" in result
     assert reply_mock.call_count == 0
+
+
+def test_reauth_url_carries_hint_query_param(monkeypatch, make_account):
+    # A1.1: URL contains &hint=<urlencoded-email> so gmail_start can forward it
+    # to Google as login_hint and the callback can verify the chosen account.
+    monkeypatch.setenv("APP_URL", "https://example.com")
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    _patch_accounts(monkeypatch, [make_account("uuid-a", "a@x.com")])
+    reply_mock = MagicMock()
+    monkeypatch.setattr(events, "_reply", reply_mock)
+
+    events._tool_reauth({"email": "a@x.com"})
+
+    sent_text = reply_mock.call_args.args[0]
+    assert "hint=a%40x.com" in sent_text
+
+
+def test_reauth_url_still_carries_secret(monkeypatch, make_account):
+    # A1.2: regression — adding hint must not displace the secret param.
+    monkeypatch.setenv("APP_URL", "https://example.com")
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    _patch_accounts(monkeypatch, [make_account("uuid-a", "a@x.com")])
+    reply_mock = MagicMock()
+    monkeypatch.setattr(events, "_reply", reply_mock)
+
+    events._tool_reauth({"email": "a@x.com"})
+
+    sent_text = reply_mock.call_args.args[0]
+    assert "secret=s3cret" in sent_text
