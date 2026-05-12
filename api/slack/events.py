@@ -265,6 +265,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         "check_reply_status": _tool_check_reply_status,
         "reauth": _tool_reauth,
         "compose_email": _tool_compose,
+        "find_contact": _tool_find_contact,
     }
     executor = executors.get(tool_name)
     if not executor:
@@ -664,6 +665,69 @@ def _normalize_addrs(value) -> list:
     else:
         return []
     return [p for p in parts if p]
+
+
+def _tool_find_contact(params: dict) -> str:
+    from lib.db import get_active_accounts, search_contacts
+    from lib.gmail import (
+        credentials_from_encrypted,
+        refresh_if_needed,
+        search_addresses,
+    )
+
+    query = (params.get("query") or "").strip()
+    if len(query) < 2:
+        return "Please provide a name or partial address at least 2 characters long."
+
+    hits = search_contacts(query, limit=10)
+    source = "inbox history"
+
+    if not hits:
+        merged: dict = {}
+        for acct in get_active_accounts():
+            if getattr(acct, "needs_reauth", False):
+                continue
+            try:
+                creds = credentials_from_encrypted(acct.encrypted_tokens)
+                creds, _ = refresh_if_needed(creds)
+                for c in search_addresses(creds, query, max_results=20):
+                    key = c["email"].lower()
+                    existing = merged.get(key)
+                    if not existing or c["frequency"] > existing["frequency"]:
+                        merged[key] = c
+            except Exception:
+                continue
+        hits = sorted(
+            merged.values(),
+            key=lambda c: (
+                -c["frequency"],
+                -(c["last_seen"].timestamp() if c["last_seen"] else 0),
+            ),
+        )[:10]
+        source = "full Gmail history"
+
+    if not hits:
+        return (
+            f"No contacts found matching '{query}'. "
+            "Ask the user for the email address directly."
+        )
+
+    if len(hits) == 1:
+        h = hits[0]
+        name = h.get("name") or h["email"].split("@")[0]
+        return (
+            f"One match (from {source}): {name} <{h['email']}>. "
+            "Use this email when composing."
+        )
+
+    lines = [f"Found {len(hits)} matches for '{query}' (from {source}):"]
+    for i, h in enumerate(hits, 1):
+        name = h.get("name") or h["email"].split("@")[0]
+        freq = h.get("frequency", 0)
+        when = h["last_seen"].strftime("%b %d, %Y") if h.get("last_seen") else "?"
+        lines.append(f"  {i}. {name} <{h['email']}> — {freq} email(s), last on {when}")
+    lines.append("Ask the user to pick one, then call compose_email with the chosen address.")
+    return "\n".join(lines)
 
 
 def _tool_reauth(params: dict) -> str:

@@ -162,6 +162,44 @@ def update_account_tokens(account_id: str, encrypted_tokens: str) -> None:
             account.updated_at = datetime.now(timezone.utc)
 
 
+def search_contacts(query: str, limit: int = 10) -> List[dict]:
+    """Look up contacts by name or email substring, ranked by frequency + recency.
+
+    Aggregates rows in the ``emails`` table by sender. Returns at most ``limit``
+    matches as ``{email, name, last_seen, frequency}`` dicts. Empty list when
+    ``query`` is shorter than 2 characters (guards against runaway scans).
+    """
+    from sqlalchemy import text
+    if not query or len(query.strip()) < 2:
+        return []
+    pattern = f"%{query.strip()}%"
+    stmt = text("""
+        SELECT sender_email AS email,
+               MAX(sender_name) FILTER (
+                   WHERE sender_name IS NOT NULL AND sender_name != ''
+               ) AS name,
+               MAX(date) AS last_seen,
+               COUNT(*) AS frequency
+        FROM emails
+        WHERE (sender_email ILIKE :pattern OR sender_name ILIKE :pattern)
+          AND sender_email IS NOT NULL AND sender_email != ''
+        GROUP BY sender_email
+        ORDER BY frequency DESC, last_seen DESC
+        LIMIT :limit
+    """)
+    with get_session() as session:
+        rows = session.execute(stmt, {"pattern": pattern, "limit": limit}).all()
+        return [
+            {
+                "email": r.email,
+                "name": r.name,
+                "last_seen": r.last_seen,
+                "frequency": r.frequency,
+            }
+            for r in rows
+        ]
+
+
 def mark_account_needs_reauth(account_id: str, needs_reauth: bool) -> None:
     """Set or clear the needs_reauth flag on an account.
 

@@ -31,6 +31,10 @@ AGENT_SYSTEM = (
     "- For NEW outbound emails (not replying to anything in the inbox), use the "
     "compose_email tool. You write the subject and body yourself based on the user's "
     "instruction. Always show the draft with Send/Cancel — never send without review.\n"
+    "- When the user wants to email someone by name (e.g. \"email jeffrey\") and the "
+    "address isn't already obvious from context, call find_contact FIRST to resolve "
+    "the address. Exactly one match → use it. Multiple → ask the user which. Zero → "
+    "ask the user for the address directly.\n"
     "- CC vs BCC: CC (carbon copy) is visible to all recipients — use when the "
     "copied party should be known. BCC (blind carbon copy) hides the copied address "
     "from other recipients — use for: mass sends where recipients shouldn't see each "
@@ -251,6 +255,28 @@ TOOLS = [
                 },
             },
             "required": ["to", "subject", "body"],
+        },
+    },
+    {
+        "name": "find_contact",
+        "description": (
+            "Look up an email address by name when the user asks to email someone "
+            "but didn't give the address. Searches inbox history first (fast), then "
+            "falls back to the full Gmail corpus including sent mail. Returns a list "
+            "of candidates with frequency + recency. ALWAYS call this before "
+            "compose_email when the user gives a name instead of an email address. "
+            "If 1 match, use that email. If multiple, ask the user which one. If 0, "
+            "ask the user for the address."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The name (or partial name/address) to look up. Minimum length 2.",
+                },
+            },
+            "required": ["query"],
         },
     },
     {

@@ -494,6 +494,70 @@ def _parse_date(date_str: str) -> datetime:
         return datetime.now(timezone.utc)
 
 
+def search_addresses(creds, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+    """Search Gmail for contacts matching ``query`` across From/To/Cc headers.
+
+    Used as the fallback when the local DB has no hit (e.g. pure-outbound
+    contacts the user has emailed but never received from). Returns dicts of
+    ``{email, name, last_seen, frequency}`` aggregated and ranked.
+    """
+    service = _build_service(creds)
+    safe = query.replace('"', "").replace("\\", "")
+    q = f'(from:"{safe}" OR to:"{safe}" OR cc:"{safe}")'
+    try:
+        resp = service.users().messages().list(
+            userId="me", q=q, maxResults=max_results,
+        ).execute()
+    except HttpError:
+        return []
+    ids = [m["id"] for m in resp.get("messages", []) or []]
+    if not ids:
+        return []
+
+    contacts: Dict[str, Dict[str, Any]] = {}
+    needle = safe.lower()
+    for msg_id in ids:
+        try:
+            msg = service.users().messages().get(
+                userId="me", id=msg_id, format="metadata",
+                metadataHeaders=["From", "To", "Cc", "Date"],
+            ).execute()
+        except HttpError:
+            continue
+        headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+        date = _parse_date(headers.get("Date", ""))
+        for header_name in ("From", "To", "Cc"):
+            value = headers.get(header_name, "")
+            if not value:
+                continue
+            for addr in _parse_email_addresses(value):
+                if not addr.email:
+                    continue
+                hay = (addr.email + " " + (addr.name or "")).lower()
+                if needle not in hay:
+                    continue
+                key = addr.email.lower()
+                slot = contacts.setdefault(key, {
+                    "email": addr.email,
+                    "name": addr.name,
+                    "last_seen": date,
+                    "frequency": 0,
+                })
+                slot["frequency"] += 1
+                if addr.name and not slot["name"]:
+                    slot["name"] = addr.name
+                if date and (not slot["last_seen"] or date > slot["last_seen"]):
+                    slot["last_seen"] = date
+
+    return sorted(
+        contacts.values(),
+        key=lambda c: (
+            -c["frequency"],
+            -(c["last_seen"].timestamp() if c["last_seen"] else 0),
+        ),
+    )
+
+
 def _extract_content(
     payload: Dict[str, Any],
 ) -> Tuple[Optional[str], Optional[str], List[EmailAttachment]]:
