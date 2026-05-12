@@ -139,6 +139,7 @@ def _process_account(account) -> dict:
         except RefreshError as exc:
             mark_account_needs_reauth(account.id, True)
             complete_sync_log(log_id, 0, 0, status="failed", error_message=f"needs_reauth: {exc}")
+            _send_reauth_link(account.email_address)
             return {"account": account.email_address, "error": "needs_reauth"}
         if was_refreshed:
             update_account_tokens(account.id, credentials_to_encrypted(creds))
@@ -384,3 +385,30 @@ def _notify_expired_drafts(count: int):
 def _notify_account_error(account_email: str, error: str):
     from lib.slack_client import send_dm
     send_dm(f"\u26a0\ufe0f Sync failed for *{account_email}*: {error}")
+
+
+def _send_reauth_link(account_email: str) -> None:
+    """DM the user a clickable reauth link for a specific broken account.
+
+    Best-effort: misconfigured env or a Slack outage logs and returns without
+    raising \u2014 the cron must not crash because notification failed. The flag is
+    already flipped by the caller, so the next summary will still surface the
+    account.
+    """
+    import os
+    from lib.reauth import build_reauth_message
+    from lib.slack_client import send_dm
+
+    app_url = os.environ.get("APP_URL", "").rstrip("/")
+    setup_secret = os.environ.get("SETUP_SECRET", "")
+    if not app_url or not setup_secret:
+        logger.warning(
+            "Cannot send reauth link for %s: APP_URL/SETUP_SECRET not configured",
+            account_email,
+        )
+        return
+
+    try:
+        send_dm(build_reauth_message(app_url, setup_secret, account_email))
+    except Exception as exc:
+        logger.error("Failed to send reauth link for %s: %s", account_email, exc)

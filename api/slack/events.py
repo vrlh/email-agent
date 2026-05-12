@@ -686,16 +686,8 @@ def _tool_reauth(params: dict) -> str:
     if not setup_secret:
         return "SETUP_SECRET is not configured — can't build re-auth link."
 
-    from urllib.parse import urlencode
-    reauth_url = (
-        f"{app_url}/api/auth/gmail_start?"
-        f"{urlencode({'secret': setup_secret, 'hint': target})}"
-    )
-    _reply(
-        f"\U0001f511 *Reconnect Gmail for {target}*\n"
-        f"<{reauth_url}|Click here to re-authenticate>, then sign in as *{target}* "
-        "to refresh the tokens. Existing emails and rules are preserved."
-    )
+    from lib.reauth import build_reauth_message
+    _reply(build_reauth_message(app_url, setup_secret, target))
     return "[Already displayed to user] Re-auth link sent."
 
 

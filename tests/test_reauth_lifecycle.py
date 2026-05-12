@@ -47,11 +47,21 @@ def test_full_reauth_lifecycle(monkeypatch, make_account):
         "lib.gmail.refresh_if_needed",
         lambda c: (_ for _ in ()).throw(RefreshError("invalid_grant")),
     )
+    # The cron now DMs the reauth link directly when refresh fails — capture it.
+    monkeypatch.setenv("APP_URL", "https://app.example.com")
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    proactive_dm = MagicMock(return_value="ts-proactive")
+    monkeypatch.setattr("lib.slack_client.send_dm", proactive_dm)
 
-    # ── Step 1: cron tries to refresh → RefreshError → flag flips. ──
+    # ── Step 1: cron tries to refresh → RefreshError → flag flips +
+    #           proactive reauth-link DM is sent immediately. ──
     result = check_emails._process_account(account)
     assert result.get("error") == "needs_reauth"
     assert account.needs_reauth is True
+    assert proactive_dm.call_count == 1
+    proactive_text = proactive_dm.call_args.args[0]
+    assert "a@x.com" in proactive_text
+    assert "https://app.example.com/api/auth/gmail_start" in proactive_text
 
     # ── Step 2: cron summary now mentions the flagged account. ──
     send_mock = MagicMock(return_value="ts-1")

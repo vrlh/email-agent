@@ -92,6 +92,84 @@ def test_account_flagged_needs_reauth_is_skipped(monkeypatch):
     assert result.get("skipped") == "needs_reauth"
 
 
+def test_refresh_error_sends_reauth_link_dm(monkeypatch):
+    # Behavior 4: RefreshError + env configured → exactly one send_dm call,
+    # message contains the account's email and the reauth URL.
+    _patch_minimal_pipeline(monkeypatch)
+    monkeypatch.setenv("APP_URL", "https://example.com")
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    monkeypatch.setattr("lib.db.mark_account_needs_reauth", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "lib.gmail.credentials_from_encrypted", lambda enc: MagicMock(name="creds"),
+    )
+
+    def boom(_creds):
+        raise RefreshError("invalid_grant")
+
+    monkeypatch.setattr("lib.gmail.refresh_if_needed", boom)
+
+    send_mock = MagicMock(return_value="ts")
+    monkeypatch.setattr("lib.slack_client.send_dm", send_mock)
+
+    result = check_emails._process_account(_account())
+
+    assert send_mock.call_count == 1
+    sent_text = send_mock.call_args.args[0]
+    assert "a@x.com" in sent_text
+    assert "https://example.com/api/auth/gmail_start" in sent_text
+    # Flag-flip and return shape preserved (regression).
+    assert result.get("error") == "needs_reauth"
+
+
+def test_refresh_error_without_app_url_flips_flag_but_skips_dm(monkeypatch):
+    # Behavior 5: misconfigured env → flag still flips, but no DM attempted.
+    _patch_minimal_pipeline(monkeypatch)
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    mark_mock = MagicMock()
+    monkeypatch.setattr("lib.db.mark_account_needs_reauth", mark_mock)
+    monkeypatch.setattr(
+        "lib.gmail.credentials_from_encrypted", lambda enc: MagicMock(name="creds"),
+    )
+    monkeypatch.setattr(
+        "lib.gmail.refresh_if_needed",
+        lambda c: (_ for _ in ()).throw(RefreshError("invalid_grant")),
+    )
+
+    send_mock = MagicMock(return_value="ts")
+    monkeypatch.setattr("lib.slack_client.send_dm", send_mock)
+
+    result = check_emails._process_account(_account())
+
+    mark_mock.assert_called_once_with("uuid-a", True)
+    send_mock.assert_not_called()
+    assert result.get("error") == "needs_reauth"
+
+
+def test_refresh_error_swallows_send_dm_failure(monkeypatch):
+    # Behavior 6: send_dm raises (Slack outage) → cron still returns cleanly.
+    _patch_minimal_pipeline(monkeypatch)
+    monkeypatch.setenv("APP_URL", "https://example.com")
+    monkeypatch.setenv("SETUP_SECRET", "s3cret")
+    monkeypatch.setattr("lib.db.mark_account_needs_reauth", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "lib.gmail.credentials_from_encrypted", lambda enc: MagicMock(name="creds"),
+    )
+    monkeypatch.setattr(
+        "lib.gmail.refresh_if_needed",
+        lambda c: (_ for _ in ()).throw(RefreshError("invalid_grant")),
+    )
+
+    def slack_down(*a, **kw):
+        raise RuntimeError("slack 503")
+
+    monkeypatch.setattr("lib.slack_client.send_dm", slack_down)
+
+    result = check_emails._process_account(_account())  # must not raise
+
+    assert result.get("error") == "needs_reauth"
+
+
 def test_successful_refresh_does_not_touch_needs_reauth_flag(monkeypatch):
     # B2.3: regression — healthy refresh path never calls mark_account_needs_reauth.
     _patch_minimal_pipeline(monkeypatch)
