@@ -4,10 +4,8 @@ The user types anything natural, Claude decides which tools to call,
 we execute them, and Claude generates a conversational response.
 """
 
-import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
 
 import anthropic
 

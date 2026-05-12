@@ -3,14 +3,13 @@
 import json
 import logging
 import os
-from typing import List, Optional
+from typing import List
 
 import anthropic
 
 from lib.models import (
     DraftContent,
     Email,
-    EmailAddress,
     ParsedCommand,
     TriageDecision,
     TriageResult,

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from slack_sdk import WebClient
 
-from lib.models import Email, EmailCategory, EmailPriority, TriageDecision
+from lib.models import Email
 
 
 def _get_client() -> WebClient:

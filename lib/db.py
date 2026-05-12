@@ -7,10 +7,9 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import create_engine, select, update
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-from sqlalchemy import delete as sql_delete
 
 from lib.db_models import (
     Base,
