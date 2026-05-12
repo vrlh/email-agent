@@ -255,15 +255,23 @@ TOOLS = [
     },
     {
         "name": "reauth",
-        "description": "Generate a re-authentication link when Gmail tokens have expired or access has been revoked. User clicks the link, signs in with Google, and tokens are refreshed for the existing account. Use this when the user says tokens expired, sign-in broke, they got disconnected, or they need to reconnect Gmail.",
+        "description": (
+            "Generate a Gmail re-authentication link for a SPECIFIC account when its "
+            "tokens have expired or access has been revoked. You MUST specify the email "
+            "address of the account being reconnected so the user knows which one to "
+            "sign in as — if you don't know which account (e.g. multiple are expired), "
+            "ask the user first before calling this. Calling without an email returns "
+            "an error listing active accounts."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "email": {
                     "type": "string",
-                    "description": "Optional — the email address to reconnect, shown in the message. Google picks the account based on which one the user signs in with.",
+                    "description": "The email address of the account to reconnect. Required — appears in the Slack message so the user signs in as the right account.",
                 },
             },
+            "required": ["email"],
         },
     },
 ]

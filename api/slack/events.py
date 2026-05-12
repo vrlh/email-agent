@@ -224,17 +224,24 @@ def _get_thread_history(channel: str, thread_ts: str) -> str:
 
 def _build_context() -> str:
     """Build a context string with last-displayed emails so Claude can resolve #N refs."""
-    from lib.db import get_recent_emails, get_pending_draft
+    from lib.db import get_active_accounts, get_pending_draft, get_recent_emails
+
+    accounts = get_active_accounts()
+    addr_by_id = {a.id: a.email_address for a in accounts}
 
     emails = _last_displayed_emails if _last_displayed_emails else get_recent_emails(limit=50)
     draft = get_pending_draft()
 
     lines = []
+    if accounts:
+        lines.append("Connected accounts: " + ", ".join(a.email_address for a in accounts))
+
     for i, e in enumerate(emails, 1):
-        lines.append(f"#{i}: id={e.id} from={e.sender_email} subject=\"{e.subject}\" account={e.account_id}")
+        acct = addr_by_id.get(e.account_id, e.account_id)
+        lines.append(f'#{i}: id={e.id} from={e.sender_email} subject="{e.subject}" account={acct}')
 
     if draft:
-        lines.append(f"\nPending draft: id={draft.id} status={draft.status} subject=\"{draft.subject}\"")
+        lines.append(f'\nPending draft: id={draft.id} status={draft.status} subject="{draft.subject}"')
 
     return "\n".join(lines) if lines else ""
 
@@ -660,6 +667,16 @@ def _normalize_addrs(value) -> list:
 
 def _tool_reauth(params: dict) -> str:
     import os
+    from lib.db import get_active_accounts
+
+    target = (params.get("email") or "").strip()
+    if not target:
+        accounts = get_active_accounts()
+        addrs = ", ".join(a.email_address for a in accounts) if accounts else "(none connected)"
+        return (
+            f"Which account should I reconnect? Active accounts: {addrs}. "
+            "Ask the user to pick one, then call reauth with that email."
+        )
 
     setup_secret = os.environ.get("SETUP_SECRET", "")
     app_url = os.environ.get("APP_URL", "").rstrip("/")
@@ -669,14 +686,10 @@ def _tool_reauth(params: dict) -> str:
         return "SETUP_SECRET is not configured — can't build re-auth link."
 
     reauth_url = f"{app_url}/api/auth/gmail_start?secret={setup_secret}"
-    target = params.get("email", "").strip()
-    target_line = f" for *{target}*" if target else ""
-
     _reply(
-        f"\U0001f511 *Reconnect Gmail{target_line}*\n"
-        f"<{reauth_url}|Click here to re-authenticate>, then sign in with the Google "
-        "account you want to reconnect. Your existing emails and rules are preserved — "
-        "only the tokens get refreshed."
+        f"\U0001f511 *Reconnect Gmail for {target}*\n"
+        f"<{reauth_url}|Click here to re-authenticate>, then sign in as *{target}* "
+        "to refresh the tokens. Existing emails and rules are preserved."
     )
     return "[Already displayed to user] Re-auth link sent."
 
